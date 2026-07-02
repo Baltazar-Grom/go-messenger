@@ -33,7 +33,7 @@ type Message struct {
 	Text      string   `json:"text"`
 	Image     string   `json:"image,omitempty"`
 	FileName  string   `json:"file_name,omitempty"`
-	Payload   string   `json:"payload,omitempty"` // Для WebRTC сигналинга
+	Payload   string   `json:"payload,omitempty"`
 	Users     []string `json:"users,omitempty"`
 	Receiver  string   `json:"receiver,omitempty"`
 	GroupID   int      `json:"group_id,omitempty"`
@@ -71,12 +71,13 @@ func initDB() {
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 
-	db.Exec("ALTER TABLE messages ADD COLUMN image TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE private_messages ADD COLUMN image TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE group_messages ADD COLUMN image TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE messages ADD COLUMN file_name TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE private_messages ADD COLUMN file_name TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE group_messages ADD COLUMN file_name TEXT DEFAULT ''")
+	// Используем IF NOT EXISTS для безопасной миграции
+	db.Exec("ALTER TABLE messages ADD COLUMN IF NOT EXISTS image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE private_messages ADD COLUMN IF NOT EXISTS image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE private_messages ADD COLUMN IF NOT EXISTS file_name TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS file_name TEXT DEFAULT ''")
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
@@ -230,13 +231,10 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			handleTyping(msg)
 			continue
 		}
-
-		// WebRTC Сигналинг (пересылка напрямую между двумя пользователями)
 		if msg.Type == "webrtc" && msg.Receiver != "" {
 			handleWebRTC(msg)
 			continue
 		}
-
 		if msg.Type == "group_message" && msg.GroupID != 0 {
 			db.Exec("INSERT INTO group_messages (group_id, username, text, image, file_name) VALUES (?, ?, ?, ?, ?)", msg.GroupID, username, msg.Text, msg.Image, msg.FileName)
 			handleGroupMessage(msg)

@@ -61,7 +61,6 @@
         .modal-content .btn-accept { background: #28a745; }
         .modal-content .btn-reject { background: #dc3545; }
 
-        /* Полностью адаптивное окно видеозвонка */
         .call-modal { 
             position: fixed;
             top: 50%;
@@ -135,7 +134,6 @@
         
         .hidden { display: none !important; }
 
-        /* Мобильная адаптивность */
         @media (max-width: 768px) {
             body { overflow: auto; }
             .app-container { 
@@ -532,6 +530,12 @@
             if (!file) return;
             if (file.size > 5 * 1024 * 1024) { alert('Файл слишком большой! Максимум 5 МБ.'); return; }
             
+            // Проверка состояния сокета для стабильности
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                alert('Соединение с сервером потеряно. Перезагрузите страницу.');
+                return;
+            }
+
             var reader = new FileReader();
             reader.onload = function(e) {
                 var base64 = e.target.result;
@@ -551,6 +555,12 @@
         function sendMessage() {
             var input = document.getElementById('msg_input');
             if (input.value.trim() !== '') {
+                // Проверка состояния сокета для стабильности
+                if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    alert('Соединение с сервером потеряно. Перезагрузите страницу.');
+                    return;
+                }
+
                 var msg = { text: input.value };
                 if (currentChat === 'general') msg.type = 'message';
                 else if (currentChat === 'group') { msg.type = 'group_message'; msg.group_id = currentGroupID; }
@@ -560,37 +570,17 @@
             }
         }
 
-        // ==================== WEBRTC ЛОГИКА (ПОЛНОСТЬЮ ПЕРЕПИСАНА) ====================
-
         async function getMediaStream(facingMode = 'user') {
             const constraints = {
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true
-                },
-                video: {
-                    facingMode: facingMode,
-                    width: { ideal: 1280, max: 1920 },
-                    height: { ideal: 720, max: 1080 },
-                    frameRate: { ideal: 30, max: 60 }
-                }
+                audio: { echoCancellation: true, noiseSuppression: true },
+                video: { facingMode: facingMode, width: { ideal: 1280, max: 1920 }, height: { ideal: 720, max: 1080 }, frameRate: { ideal: 30, max: 60 } }
             };
-
             try {
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                console.log('Получен поток с треками:', stream.getTracks().map(t => t.kind));
                 return stream;
             } catch (err) {
-                console.warn('Не удалось получить поток с facingMode:', facingMode, err);
-                // Fallback: пробуем без facingMode
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                    console.log('Получен поток без facingMode:', stream.getTracks().map(t => t.kind));
-                    return stream;
-                } catch (err2) {
-                    console.error('Не удалось получить поток вообще:', err2);
-                    throw err2;
-                }
+                console.warn('Fallback to default media constraints');
+                return await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             }
         }
 
@@ -598,41 +588,22 @@
             if(event) event.stopPropagation();
             currentCallTarget = targetUsername;
             currentFacingMode = 'user';
-            console.log('=== НАЧИНАЕМ ЗВОНОК === с', targetUsername);
 
             try {
-                // Получаем медиа поток
                 localStream = await getMediaStream(currentFacingMode);
-                console.log('Локальный поток получен, треки:', localStream.getTracks().length);
-                
-                // Показываем локальное видео
-                const localVideo = document.getElementById('local_video');
-                localVideo.srcObject = localStream;
-                
-                // Принудительно запускаем воспроизведение (важно для мобильных)
-                localVideo.play().catch(e => console.log('Autoplay prevented:', e));
-                
+                document.getElementById('local_video').srcObject = localStream;
+                document.getElementById('local_video').play().catch(e => console.log('Autoplay prevented:', e));
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
-                // Настраиваем peer connection
                 await setupPeerConnection();
 
-                // Создаём offer
-                const offer = await peerConnection.createOffer({
-                    offerToReceiveAudio: true,
-                    offerToReceiveVideo: true
-                });
+                const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
                 await peerConnection.setLocalDescription(offer);
-                console.log('Offer создан, тип SDP:', offer.type);
 
-                // Отправляем offer
                 socket.send(JSON.stringify({
-                    type: 'webrtc',
-                    receiver: currentCallTarget,
+                    type: 'webrtc', receiver: currentCallTarget,
                     payload: JSON.stringify({ type: 'offer', sdp: offer })
                 }));
-                
-                console.log('Offer отправлен');
             } catch (err) {
                 console.error('Ошибка при начале звонка:', err);
                 alert('Не удалось получить доступ к камере/микрофону: ' + err.message);
@@ -644,121 +615,69 @@
             peerConnection = new RTCPeerConnection(servers);
             pendingCandidates = [];
             
-            console.log('Настройка PeerConnection...');
-            
-            // Добавляем все треки из локального потока
             localStream.getTracks().forEach(track => {
-                console.log('Добавляем трек:', track.kind, 'label:', track.label);
-                const sender = peerConnection.addTrack(track, localStream);
-                console.log('Трек добавлен, sender:', sender);
+                peerConnection.addTrack(track, localStream);
             });
 
-            // Обработка ICE кандидатов
             peerConnection.onicecandidate = event => {
                 if (event.candidate) {
-                    console.log('ICE кандидат:', event.candidate.candidate.substring(0, 50) + '...');
                     socket.send(JSON.stringify({
-                        type: 'webrtc',
-                        receiver: currentCallTarget,
+                        type: 'webrtc', receiver: currentCallTarget,
                         payload: JSON.stringify({ type: 'ice_candidate', candidate: event.candidate })
                     }));
-                } else {
-                    console.log('ICE сборка завершена');
                 }
             };
 
-            // Обработка входящих треков (ВИДЕО СОБЕСЕДНИКА)
             peerConnection.ontrack = event => {
-                console.log('=== ПОЛУЧЕН ТРЕК ===', event.track.kind);
-                console.log('Streams:', event.streams.length);
-                
                 const remoteVideo = document.getElementById('remote_video');
-                
                 if (event.streams && event.streams[0]) {
-                    console.log('Используем stream из события');
                     remoteVideo.srcObject = event.streams[0];
                 } else {
-                    console.log('Создаём новый MediaStream');
                     const stream = new MediaStream([event.track]);
                     remoteVideo.srcObject = stream;
                 }
-                
-                // Принудительно запускаем воспроизведение
-                remoteVideo.play().then(() => {
-                    console.log('Remote видео воспроизводится');
-                }).catch(e => {
-                    console.error('Не удалось воспроизвести remote видео:', e);
-                    // Для iOS Safari иногда нужно кликнуть
+                remoteVideo.play().catch(e => {
+                    console.log('Remote autoplay prevented, trying muted');
                     remoteVideo.muted = true;
-                    remoteVideo.play().catch(e2 => console.error('Всё равно не работает:', e2));
+                    remoteVideo.play().catch(e2 => console.error('Play failed:', e2));
                 });
             };
 
-            // Мониторинг состояния соединения
             peerConnection.onconnectionstatechange = () => {
-                console.log('Состояние соединения:', peerConnection.connectionState);
                 if (peerConnection.connectionState === 'failed') {
-                    console.error('Соединение не удалось');
                     alert('Не удалось установить соединение. Попробуйте ещё раз.');
                     endCall();
-                } else if (peerConnection.connectionState === 'disconnected') {
-                    console.log('Соединение разорвано');
                 }
-            };
-
-            peerConnection.oniceconnectionstatechange = () => {
-                console.log('ICE состояние:', peerConnection.iceConnectionState);
-            };
-
-            peerConnection.onnegotiationneeded = () => {
-                console.log('Требуется переговоры');
             };
         }
 
         async function handleWebRTCSignal(data) {
             const payload = JSON.parse(data.payload);
             const sender = data.username;
-            console.log('=== ПОЛУЧЕН СИГНАЛ ===', payload.type, 'от', sender);
 
             if (payload.type === 'offer') {
                 currentCallTarget = sender;
                 document.getElementById('incoming_call_text').textContent = sender + ' звонит вам...';
                 document.getElementById('incoming_call_modal').classList.remove('hidden');
                 window.pendingOffer = payload.sdp;
-                console.log('Offer сохранён, ждём принятия');
             } 
             else if (payload.type === 'answer') {
                 if (peerConnection) {
-                    console.log('Устанавливаем remote description (answer)');
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-                    console.log('Remote description установлен');
-                    
-                    // Применяем накопленные ICE кандидаты
-                    console.log('Применяем', pendingCandidates.length, 'накопленных ICE кандидатов');
                     for (const candidate of pendingCandidates) {
-                        try {
-                            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                        } catch (err) {
-                            console.error('Ошибка ICE кандидата:', err);
-                        }
+                        try { await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) {}
                     }
                     pendingCandidates = [];
                 }
             } 
             else if (payload.type === 'ice_candidate') {
                 if (peerConnection && peerConnection.remoteDescription) {
-                    try {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate));
-                    } catch (err) {
-                        console.error('Ошибка ICE кандидата:', err);
-                    }
+                    try { await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate)); } catch (err) {}
                 } else {
-                    console.log('Накапливаем ICE кандидат (remote description ещё не установлен)');
                     pendingCandidates.push(payload.candidate);
                 }
             }
             else if (payload.type === 'end_call') {
-                console.log('Получен сигнал завершения звонка');
                 alert('Звонок завершен пользователем ' + sender);
                 endCall();
             }
@@ -766,44 +685,24 @@
 
         async function acceptCall() {
             document.getElementById('incoming_call_modal').classList.add('hidden');
-            console.log('=== ПРИНИМАЕМ ЗВОНОК === от', currentCallTarget);
             currentFacingMode = 'user';
             
             try {
-                // Получаем медиа поток
                 localStream = await getMediaStream(currentFacingMode);
-                console.log('Локальный поток получен');
-                
-                const localVideo = document.getElementById('local_video');
-                localVideo.srcObject = localStream;
-                localVideo.play().catch(e => console.log('Autoplay prevented:', e));
-                
+                document.getElementById('local_video').srcObject = localStream;
+                document.getElementById('local_video').play().catch(e => console.log('Autoplay prevented:', e));
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
-                // Настраиваем peer connection
                 await setupPeerConnection();
 
-                // Устанавливаем remote description (offer от звонящего)
-                console.log('Устанавливаем remote description (offer)');
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(window.pendingOffer));
-                console.log('Remote description установлен');
-                
-                // Создаём answer
-                const answer = await peerConnection.createAnswer({
-                    offerToReceiveAudio: true,
-                    offerToReceiveVideo: true
-                });
+                const answer = await peerConnection.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
                 await peerConnection.setLocalDescription(answer);
-                console.log('Answer создан и установлен');
 
-                // Отправляем answer
                 socket.send(JSON.stringify({
-                    type: 'webrtc',
-                    receiver: currentCallTarget,
+                    type: 'webrtc', receiver: currentCallTarget,
                     payload: JSON.stringify({ type: 'answer', sdp: answer })
                 }));
-                
-                console.log('Answer отправлен');
             } catch (err) {
                 console.error('Ошибка при принятии звонка:', err);
                 alert('Ошибка при принятии звонка: ' + err.message);
@@ -813,26 +712,17 @@
 
         async function switchCamera() {
             if (!localStream) return;
-            
             currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-            console.log('Переключаем камеру на:', currentFacingMode);
-            
             try {
                 const newStream = await getMediaStream(currentFacingMode);
                 const videoTrack = newStream.getVideoTracks()[0];
-                
                 const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-                if (sender) {
-                    await sender.replaceTrack(videoTrack);
-                    console.log('Видео трек заменён');
-                }
+                if (sender) await sender.replaceTrack(videoTrack);
                 
                 localStream.getVideoTracks().forEach(track => track.stop());
                 localStream = newStream;
                 document.getElementById('local_video').srcObject = newStream;
-                
             } catch (err) {
-                console.error('Ошибка переключения камеры:', err);
                 alert('Не удалось переключить камеру: ' + err.message);
             }
         }
@@ -840,22 +730,14 @@
         function rejectCall() {
             document.getElementById('incoming_call_modal').classList.add('hidden');
             socket.send(JSON.stringify({
-                type: 'webrtc',
-                receiver: currentCallTarget,
+                type: 'webrtc', receiver: currentCallTarget,
                 payload: JSON.stringify({ type: 'end_call' })
             }));
         }
 
         function endCall() {
-            console.log('=== ЗАВЕРШАЕМ ЗВОНОК ===');
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
-            }
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
-            }
+            if (peerConnection) { peerConnection.close(); peerConnection = null; }
+            if (localStream) { localStream.getTracks().forEach(track => track.stop()); localStream = null; }
             
             document.getElementById('active_call_modal').classList.add('hidden');
             document.getElementById('local_video').srcObject = null;
@@ -863,8 +745,7 @@
 
             if (currentCallTarget) {
                 socket.send(JSON.stringify({
-                    type: 'webrtc',
-                    receiver: currentCallTarget,
+                    type: 'webrtc', receiver: currentCallTarget,
                     payload: JSON.stringify({ type: 'end_call' })
                 }));
             }
