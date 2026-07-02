@@ -150,7 +150,7 @@
             <div id="typing_status"></div>
             <div class="chat-input">
                 <input type="file" id="file_input" style="display:none" onchange="handleFileSelect(event)">
-                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить файл">📎</button>
+                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить файл"></button>
                 <input type="text" id="msg_input" placeholder="Напишите сообщение..." onkeypress="if(event.key==='Enter') sendMessage()" onkeyup="handleTyping()">
                 <button class="btn-send" onclick="sendMessage()">➤</button>
             </div>
@@ -187,8 +187,8 @@
             </div>
             <div class="call-controls">
                 <button class="call-btn call-btn-mute" onclick="toggleMute()" id="mute_btn" title="Микрофон">🎤</button>
-                <button class="call-btn call-btn-switch" onclick="switchCamera()" title="Камера"></button>
-                <button class="call-btn call-btn-end" onclick="endCall()" title="Завершить">📞</button>
+                <button class="call-btn call-btn-switch" onclick="switchCamera()" title="Камера">🔄</button>
+                <button class="call-btn call-btn-end" onclick="endCall()" title="Завершить"></button>
             </div>
         </div>
     </div>
@@ -203,7 +203,6 @@
         let currentFacingMode = 'user', isMuted = false;
         let remoteAttached = false, remoteVideoReady = false;
         
-        // ВАЖНО: TURN серверы для пробива NAT мобильных операторов
         const servers = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -338,8 +337,6 @@
             else { msg.type='private'; msg.receiver=currentChat; }
             socket.send(JSON.stringify(msg)); input.value = '';
         }
-
-        // ==================== WEBRTC ====================
 
         async function getMedia(facing) {
             try { 
