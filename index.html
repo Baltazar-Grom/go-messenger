@@ -167,7 +167,10 @@
         }
 
         function connectWebSocket() {
-            socket = new WebSocket("ws://localhost:8080/ws");
+            // Автоматически определяем правильный URL для WebSocket
+            var wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            var wsUrl = wsProtocol + '//' + window.location.host + '/ws';
+            socket = new WebSocket(wsUrl);
             
             socket.onopen = function() {
                 socket.send(JSON.stringify({ type: "register", username: currentUser }));
