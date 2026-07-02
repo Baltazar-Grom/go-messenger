@@ -60,7 +60,6 @@
         .modal-content .btn-accept { background: #28a745; }
         .modal-content .btn-reject { background: #dc3545; }
 
-        /* Стили для видеозвонка */
         .call-modal { width: 800px; height: 600px; background: #000; display: flex; flex-direction: column; }
         .video-container { flex: 1; position: relative; display: flex; justify-content: center; align-items: center; }
         .remote-video { width: 100%; height: 100%; object-fit: cover; background: #222; }
@@ -126,7 +125,6 @@
         </div>
     </div>
 
-    <!-- Модалка входящего звонка -->
     <div class="modal hidden" id="incoming_call_modal">
         <div class="modal-content">
             <h3 id="incoming_call_text">Входящий звонок...</h3>
@@ -135,7 +133,6 @@
         </div>
     </div>
 
-    <!-- Модалка активного видеозвонка -->
     <div class="modal hidden" id="active_call_modal">
         <div class="call-modal">
             <div class="video-container">
@@ -158,11 +155,10 @@
         var statusDiv = document.getElementById('typing_status');
         var statusTimer;
 
-        // WebRTC переменные
         let localStream;
-        let remoteStream;
         let peerConnection;
         let currentCallTarget = '';
+        let pendingCandidates = [];
         const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
         function toggleAuthMode() {
@@ -230,7 +226,6 @@
                     return;
                 }
 
-                // WebRTC Сигналинг
                 if (data.type === "webrtc") {
                     handleWebRTCSignal(data);
                     return;
@@ -374,7 +369,7 @@
                 var div = document.createElement('div');
                 div.className = 'user-item';
                 div.innerHTML = '<span class="status"></span>' + username + 
-                                '<button class="call-btn" onclick="startCall(\'' + username + '\', event)"></button>';
+                                '<button class="call-btn" onclick="startCall(\'' + username + '\', event)">📹</button>';
                 div.onclick = function() { switchToPrivate(username); };
                 list.appendChild(div);
             });
@@ -385,7 +380,7 @@
             div.className = 'message' + (isOwn ? ' own' : '');
             var content = '<div class="meta">' + username + '</div><div class="bubble">';
             if (fileName) {
-                content += '<div class="file-container"><span class="file-icon"></span><div class="file-info"><span class="file-name">' + fileName + '</span><a href="' + image + '" download="' + fileName + '" class="file-download">Скачать</a></div></div>';
+                content += '<div class="file-container"><span class="file-icon">📄</span><div class="file-info"><span class="file-name">' + fileName + '</span><a href="' + image + '" download="' + fileName + '" class="file-download">Скачать</a></div></div>';
             } else if (image) {
                 content += '<img src="' + image + '" onclick="window.open(this.src)">';
             }
@@ -443,11 +438,12 @@
             }
         }
 
-        // ==================== WEBRTC ЛОГИКА ====================
+        // ==================== WEBRTC ЛОГИКА (ИСПРАВЛЕНА) ====================
 
         async function startCall(targetUsername, event) {
             if(event) event.stopPropagation();
             currentCallTarget = targetUsername;
+            console.log('Начинаем звонок с', targetUsername);
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -455,11 +451,16 @@
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
                 peerConnection = new RTCPeerConnection(servers);
+                pendingCandidates = [];
                 
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track));
+                localStream.getTracks().forEach(track => {
+                    console.log('Добавляем трек:', track.kind);
+                    peerConnection.addTrack(track);
+                });
 
                 peerConnection.onicecandidate = event => {
                     if (event.candidate) {
+                        console.log('ICE кандидат:', event.candidate);
                         socket.send(JSON.stringify({
                             type: 'webrtc',
                             receiver: currentCallTarget,
@@ -469,11 +470,26 @@
                 };
 
                 peerConnection.ontrack = event => {
-                    document.getElementById('remote_video').srcObject = event.streams[0];
+                    console.log('Получен трек от собеседника:', event.track.kind);
+                    const remoteVideo = document.getElementById('remote_video');
+                    if (event.streams && event.streams[0]) {
+                        console.log('Устанавливаем поток на remote_video');
+                        remoteVideo.srcObject = event.streams[0];
+                    } else {
+                        console.log('Создаём новый MediaStream');
+                        const stream = new MediaStream();
+                        stream.addTrack(event.track);
+                        remoteVideo.srcObject = stream;
+                    }
+                };
+
+                peerConnection.onconnectionstatechange = () => {
+                    console.log('Состояние соединения:', peerConnection.connectionState);
                 };
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
+                console.log('Offer создан и установлен');
 
                 socket.send(JSON.stringify({
                     type: 'webrtc',
@@ -481,6 +497,7 @@
                     payload: JSON.stringify({ type: 'offer', sdp: offer })
                 }));
             } catch (err) {
+                console.error('Ошибка при начале звонка:', err);
                 alert('Не удалось получить доступ к камере/микрофону: ' + err.message);
                 endCall();
             }
@@ -489,21 +506,32 @@
         async function handleWebRTCSignal(data) {
             const payload = JSON.parse(data.payload);
             const sender = data.username;
+            console.log('Получен WebRTC сигнал:', payload.type, 'от', sender);
 
             if (payload.type === 'offer') {
                 currentCallTarget = sender;
                 document.getElementById('incoming_call_text').textContent = sender + ' звонит вам...';
                 document.getElementById('incoming_call_modal').classList.remove('hidden');
-                
-                // Сохраняем offer для принятия
                 window.pendingOffer = payload.sdp;
             } 
             else if (payload.type === 'answer') {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+                if (peerConnection) {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+                    console.log('Remote description (answer) установлен');
+                    
+                    // Обрабатываем накопленные ICE кандидаты
+                    for (const candidate of pendingCandidates) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                    }
+                    pendingCandidates = [];
+                }
             } 
             else if (payload.type === 'ice_candidate') {
-                if (peerConnection) {
+                if (peerConnection && peerConnection.remoteDescription) {
                     await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate));
+                } else {
+                    // Накапливаем кандидаты до установки remote description
+                    pendingCandidates.push(payload.candidate);
                 }
             }
             else if (payload.type === 'end_call') {
@@ -514,6 +542,7 @@
 
         async function acceptCall() {
             document.getElementById('incoming_call_modal').classList.add('hidden');
+            console.log('Принимаем звонок от', currentCallTarget);
             
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -521,11 +550,16 @@
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
                 peerConnection = new RTCPeerConnection(servers);
+                pendingCandidates = [];
                 
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track));
+                localStream.getTracks().forEach(track => {
+                    console.log('Добавляем трек:', track.kind);
+                    peerConnection.addTrack(track);
+                });
 
                 peerConnection.onicecandidate = event => {
                     if (event.candidate) {
+                        console.log('ICE кандидат:', event.candidate);
                         socket.send(JSON.stringify({
                             type: 'webrtc',
                             receiver: currentCallTarget,
@@ -535,12 +569,29 @@
                 };
 
                 peerConnection.ontrack = event => {
-                    document.getElementById('remote_video').srcObject = event.streams[0];
+                    console.log('Получен трек от собеседника:', event.track.kind);
+                    const remoteVideo = document.getElementById('remote_video');
+                    if (event.streams && event.streams[0]) {
+                        console.log('Устанавливаем поток на remote_video');
+                        remoteVideo.srcObject = event.streams[0];
+                    } else {
+                        console.log('Создаём новый MediaStream');
+                        const stream = new MediaStream();
+                        stream.addTrack(event.track);
+                        remoteVideo.srcObject = stream;
+                    }
+                };
+
+                peerConnection.onconnectionstatechange = () => {
+                    console.log('Состояние соединения:', peerConnection.connectionState);
                 };
 
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(window.pendingOffer));
+                console.log('Remote description (offer) установлен');
+                
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
+                console.log('Answer создан и установлен');
 
                 socket.send(JSON.stringify({
                     type: 'webrtc',
@@ -548,6 +599,7 @@
                     payload: JSON.stringify({ type: 'answer', sdp: answer })
                 }));
             } catch (err) {
+                console.error('Ошибка при принятии звонка:', err);
                 alert('Ошибка при принятии звонка: ' + err.message);
                 rejectCall();
             }
@@ -563,6 +615,7 @@
         }
 
         function endCall() {
+            console.log('Завершаем звонок');
             if (peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
@@ -584,6 +637,7 @@
                 }));
             }
             currentCallTarget = '';
+            pendingCandidates = [];
         }
     </script>
 </body>
