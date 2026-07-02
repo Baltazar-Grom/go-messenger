@@ -71,13 +71,12 @@ func initDB() {
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 
-	// Используем IF NOT EXISTS для безопасной миграции
-	db.Exec("ALTER TABLE messages ADD COLUMN IF NOT EXISTS image TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE private_messages ADD COLUMN IF NOT EXISTS image TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS image TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE messages ADD COLUMN IF NOT EXISTS file_name TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE private_messages ADD COLUMN IF NOT EXISTS file_name TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE group_messages ADD COLUMN IF NOT EXISTS file_name TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE messages ADD COLUMN image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE private_messages ADD COLUMN image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE group_messages ADD COLUMN image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE messages ADD COLUMN file_name TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE private_messages ADD COLUMN file_name TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE group_messages ADD COLUMN file_name TEXT DEFAULT ''")
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {

@@ -187,7 +187,7 @@
             </div>
             <div class="call-controls">
                 <button class="call-btn call-btn-mute" onclick="toggleMute()" id="mute_btn" title="Микрофон">🎤</button>
-                <button class="call-btn call-btn-switch" onclick="switchCamera()" title="Камера">🔄</button>
+                <button class="call-btn call-btn-switch" onclick="switchCamera()" title="Камера"></button>
                 <button class="call-btn call-btn-end" onclick="endCall()" title="Завершить">📞</button>
             </div>
         </div>
@@ -202,13 +202,16 @@
         let pendingCandidates = [], remoteStream = null;
         let currentFacingMode = 'user', isMuted = false;
         let remoteAttached = false, remoteVideoReady = false;
+        
+        // ВАЖНО: TURN серверы для пробива NAT мобильных операторов
         const servers = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
                 { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' }
+                { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+                { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+                { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
             ]
         };
 
@@ -282,8 +285,8 @@
         function loadGeneralHistory() { fetch('/history').then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
         function loadPrivateHistory(p) { fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.sender, m.text, m.image, m.file_name, m.sender === currentUser)); }); }
         function loadGroupHistory(id) { fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
-        function loadGroups() { fetch('/groups?username='+currentUser).then(r=>r.json()).then(d => { var l = document.getElementById('groups_list'); l.innerHTML = ''; if(d) d.forEach(g => { var div = document.createElement('div'); div.className = 'group-item'; div.innerHTML = '<span class="icon">👥</span>' + g.name; div.onclick = function(e) { switchToGroup(g.id, g.name); }; l.appendChild(div); }); }); }
-        function loadAvailableGroups() { fetch('/available_groups?username='+currentUser).then(r=>r.json()).then(d => { var l = document.getElementById('available_groups_list'); l.innerHTML = ''; if(d) d.forEach(g => { var div = document.createElement('div'); div.className = 'group-item'; div.innerHTML = '<span class="icon">🔓</span>' + g.name + ' <button onclick="joinGroup('+g.id+')" style="margin-left:auto;background:#28a745;color:white;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;">Вступить</button>'; l.appendChild(div); }); }); }
+        function loadGroups() { fetch('/groups?username='+currentUser).then(r=>r.json()).then(d => { var l = document.getElementById('groups_list'); l.innerHTML = ''; if(d) d.forEach(g => { var div = document.createElement('div'); div.className = 'group-item'; div.innerHTML = '<span class="icon"></span>' + g.name; div.onclick = function(e) { switchToGroup(g.id, g.name); }; l.appendChild(div); }); }); }
+        function loadAvailableGroups() { fetch('/available_groups?username='+currentUser).then(r=>r.json()).then(d => { var l = document.getElementById('available_groups_list'); l.innerHTML = ''; if(d) d.forEach(g => { var div = document.createElement('div'); div.className = 'group-item'; div.innerHTML = '<span class="icon"></span>' + g.name + ' <button onclick="joinGroup('+g.id+')" style="margin-left:auto;background:#28a745;color:white;border:none;padding:3px 8px;border-radius:3px;cursor:pointer;">Вступить</button>'; l.appendChild(div); }); }); }
 
         function showCreateGroupModal() { document.getElementById('create_group_modal').classList.remove('hidden'); }
         function hideCreateGroupModal() { document.getElementById('create_group_modal').classList.add('hidden'); document.getElementById('group_name_input').value = ''; }
@@ -336,7 +339,7 @@
             socket.send(JSON.stringify(msg)); input.value = '';
         }
 
-        // ==================== ЖЕЛЕЗОБЕТОННЫЙ WEBRTC ====================
+        // ==================== WEBRTC ====================
 
         async function getMedia(facing) {
             try { 
@@ -354,18 +357,13 @@
             document.getElementById('call_status').textContent = text;
         }
 
-        // Безопасное воспроизведение видео
         function safePlay(videoEl) {
             if (!videoEl || !videoEl.srcObject) return;
-            
-            // Если уже играет — ничего не делаем
             if (!videoEl.paused) return;
-            
             var playPromise = videoEl.play();
             if (playPromise !== undefined) {
                 playPromise.catch(function(err) {
                     console.warn('Play blocked:', err.name);
-                    // Пробуем с muted
                     videoEl.muted = true;
                     videoEl.play().catch(function(err2) {
                         console.error('Play completely blocked:', err2.name);
@@ -376,7 +374,6 @@
             }
         }
 
-        // Ручной запуск видео
         function manualPlay() {
             var rv = document.getElementById('remote_video');
             rv.muted = false;
@@ -412,27 +409,21 @@
                 }
             };
 
-            // КЛЮЧЕВАЯ ЛОГИКА: собираем все треки в один поток
             peerConnection.ontrack = function(event) {
                 console.log('ontrack:', event.track.kind, 'readyState:', event.track.readyState);
-                
-                // Добавляем трек в наш единый поток
                 remoteStream.addTrack(event.track);
                 
-                // Устанавливаем srcObject ТОЛЬКО ОДИН РАЗ
                 if (!remoteAttached) {
                     remoteAttached = true;
                     var rv = document.getElementById('remote_video');
                     rv.srcObject = remoteStream;
                     
-                    // Ждём loadedmetadata перед воспроизведением
                     rv.onloadedmetadata = function() {
                         console.log('Remote video metadata loaded');
                         remoteVideoReady = true;
                         safePlay(rv);
                     };
                     
-                    // Если metadata уже загружено
                     if (rv.readyState >= 1) {
                         remoteVideoReady = true;
                         safePlay(rv);
