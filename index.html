@@ -2,11 +2,12 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Go Мессенджер</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: sans-serif; background: #f0f2f5; height: 100vh; display: flex; justify-content: center; align-items: center; }
-        .app-container { display: flex; width: 900px; height: 650px; background: #fff; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        body { font-family: sans-serif; background: #f0f2f5; height: 100vh; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+        .app-container { display: flex; width: 900px; max-width: 100%; height: 650px; max-height: 100vh; background: #fff; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; }
         .sidebar { width: 250px; background: #f8f9fa; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
         .sidebar-header { background: #0084ff; color: white; padding: 15px; font-weight: bold; text-align: center; }
         .online-list { flex: 1; overflow-y: auto; padding: 10px; }
@@ -17,7 +18,7 @@
         .user-item .status { width: 8px; height: 8px; background: #4caf50; border-radius: 50%; display: inline-block; margin-right: 8px; }
         .user-item .call-btn { margin-left: auto; background: #28a745; color: white; border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; }
         .group-item .icon { margin-right: 8px; }
-        .chat-area { flex: 1; display: flex; flex-direction: column; }
+        .chat-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
         .chat-header { background: #0084ff; color: white; padding: 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
         .chat-header button { background: rgba(255,255,255,0.2); border: none; color: white; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
         .chat-messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; }
@@ -44,7 +45,7 @@
         .btn-send { background: #0084ff; }
         .btn-attach { background: #28a745; }
         
-        .login-screen { position: fixed; width: 350px; background: #fff; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; padding: 40px; }
+        .login-screen { position: fixed; width: 350px; max-width: 90%; background: #fff; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; padding: 40px; }
         .login-screen h2 { margin-bottom: 20px; }
         .login-screen input { padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px; }
         .login-screen button { padding: 12px; width: 100%; background: #0084ff; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-bottom: 10px; }
@@ -52,7 +53,7 @@
         .login-screen .error { color: red; margin-top: 10px; font-size: 14px; height: 20px; }
         
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 200; }
-        .modal-content { background: white; padding: 30px; border-radius: 10px; width: 400px; text-align: center; }
+        .modal-content { background: white; padding: 30px; border-radius: 10px; width: 400px; max-width: 90%; text-align: center; }
         .modal-content h3 { margin-bottom: 20px; }
         .modal-content input { padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 5px; }
         .modal-content button { padding: 10px 20px; background: #0084ff; color: white; border: none; border-radius: 5px; cursor: pointer; margin: 5px; }
@@ -60,14 +61,105 @@
         .modal-content .btn-accept { background: #28a745; }
         .modal-content .btn-reject { background: #dc3545; }
 
-        .call-modal { width: 800px; height: 600px; background: #000; display: flex; flex-direction: column; }
-        .video-container { flex: 1; position: relative; display: flex; justify-content: center; align-items: center; }
-        .remote-video { width: 100%; height: 100%; object-fit: cover; background: #222; }
-        .local-video { position: absolute; bottom: 20px; right: 20px; width: 150px; height: 110px; object-fit: cover; border: 2px solid white; border-radius: 8px; background: #333; }
-        .call-controls { padding: 20px; display: flex; justify-content: center; gap: 20px; background: #111; }
-        .call-btn-end { background: #dc3545; color: white; border: none; padding: 10px 30px; border-radius: 20px; cursor: pointer; font-size: 16px; }
+        /* Адаптивное окно видеозвонка */
+        .call-modal { 
+            width: 90vw; 
+            max-width: 800px; 
+            height: 80vh; 
+            max-height: 600px; 
+            background: #000; 
+            display: flex; 
+            flex-direction: column; 
+            border-radius: 10px; 
+            overflow: hidden; 
+        }
+        .video-container { 
+            flex: 1; 
+            position: relative; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            overflow: hidden; 
+        }
+        .remote-video { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: contain; 
+            background: #222; 
+        }
+        .local-video { 
+            position: absolute; 
+            bottom: 10px; 
+            right: 10px; 
+            width: 120px; 
+            height: 90px; 
+            object-fit: cover; 
+            border: 2px solid white; 
+            border-radius: 8px; 
+            background: #333; 
+        }
+        .call-controls { 
+            padding: 15px; 
+            display: flex; 
+            justify-content: center; 
+            gap: 15px; 
+            background: #111; 
+        }
+        .call-btn-end { 
+            background: #dc3545; 
+            color: white; 
+            border: none; 
+            padding: 10px 25px; 
+            border-radius: 20px; 
+            cursor: pointer; 
+            font-size: 16px; 
+        }
+        .call-btn-switch { 
+            background: #0084ff; 
+            color: white; 
+            border: none; 
+            padding: 10px 25px; 
+            border-radius: 20px; 
+            cursor: pointer; 
+            font-size: 16px; 
+        }
         
         .hidden { display: none !important; }
+
+        /* Адаптивность для мобильных устройств */
+        @media (max-width: 768px) {
+            .app-container { 
+                flex-direction: column; 
+                width: 100%; 
+                height: 100vh; 
+                border-radius: 0; 
+            }
+            .sidebar { 
+                width: 100%; 
+                height: 40%; 
+                border-right: none; 
+                border-bottom: 1px solid #ddd; 
+            }
+            .chat-area { 
+                height: 60%; 
+            }
+            .call-modal { 
+                width: 100vw; 
+                height: 100vh; 
+                max-width: 100%; 
+                max-height: 100%; 
+                border-radius: 0; 
+            }
+            .local-video { 
+                width: 80px; 
+                height: 60px; 
+                bottom: 5px; 
+                right: 5px; 
+            }
+            .message { 
+                max-width: 85%; 
+            }
+        }
     </style>
 </head>
 <body>
@@ -140,7 +232,8 @@
                 <video id="local_video" class="local-video" autoplay playsinline muted></video>
             </div>
             <div class="call-controls">
-                <button class="call-btn-end" onclick="endCall()">Завершить звонок</button>
+                <button class="call-btn-switch" onclick="switchCamera()" id="switch_camera_btn">🔄 Камера</button>
+                <button class="call-btn-end" onclick="endCall()">Завершить</button>
             </div>
         </div>
     </div>
@@ -159,7 +252,13 @@
         let peerConnection;
         let currentCallTarget = '';
         let pendingCandidates = [];
-        const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let currentFacingMode = 'user'; // 'user' = фронтальная, 'environment' = задняя
+        const servers = { 
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ] 
+        };
 
         function toggleAuthMode() {
             isRegisterMode = !isRegisterMode;
@@ -438,56 +537,42 @@
             }
         }
 
-        // ==================== WEBRTC ЛОГИКА (ИСПРАВЛЕНА) ====================
+        // ==================== WEBRTC ЛОГИКА (УЛУЧШЕНА) ====================
+
+        async function getMediaStream(facingMode = 'user') {
+            try {
+                return await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: facingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }, 
+                    audio: true 
+                });
+            } catch (err) {
+                console.warn('Не удалось получить видео с facingMode:', facingMode, err);
+                // Fallback: пробуем без указания facingMode
+                return await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            }
+        }
 
         async function startCall(targetUsername, event) {
             if(event) event.stopPropagation();
             currentCallTarget = targetUsername;
+            currentFacingMode = 'user';
             console.log('Начинаем звонок с', targetUsername);
 
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localStream = await getMediaStream(currentFacingMode);
                 document.getElementById('local_video').srcObject = localStream;
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
-                peerConnection = new RTCPeerConnection(servers);
-                pendingCandidates = [];
-                
-                localStream.getTracks().forEach(track => {
-                    console.log('Добавляем трек:', track.kind);
-                    peerConnection.addTrack(track);
+                await setupPeerConnection();
+
+                const offer = await peerConnection.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: true
                 });
-
-                peerConnection.onicecandidate = event => {
-                    if (event.candidate) {
-                        console.log('ICE кандидат:', event.candidate);
-                        socket.send(JSON.stringify({
-                            type: 'webrtc',
-                            receiver: currentCallTarget,
-                            payload: JSON.stringify({ type: 'ice_candidate', candidate: event.candidate })
-                        }));
-                    }
-                };
-
-                peerConnection.ontrack = event => {
-                    console.log('Получен трек от собеседника:', event.track.kind);
-                    const remoteVideo = document.getElementById('remote_video');
-                    if (event.streams && event.streams[0]) {
-                        console.log('Устанавливаем поток на remote_video');
-                        remoteVideo.srcObject = event.streams[0];
-                    } else {
-                        console.log('Создаём новый MediaStream');
-                        const stream = new MediaStream();
-                        stream.addTrack(event.track);
-                        remoteVideo.srcObject = stream;
-                    }
-                };
-
-                peerConnection.onconnectionstatechange = () => {
-                    console.log('Состояние соединения:', peerConnection.connectionState);
-                };
-
-                const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 console.log('Offer создан и установлен');
 
@@ -501,6 +586,54 @@
                 alert('Не удалось получить доступ к камере/микрофону: ' + err.message);
                 endCall();
             }
+        }
+
+        async function setupPeerConnection() {
+            peerConnection = new RTCPeerConnection(servers);
+            pendingCandidates = [];
+            
+            localStream.getTracks().forEach(track => {
+                console.log('Добавляем трек:', track.kind);
+                peerConnection.addTrack(track, localStream);
+            });
+
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    console.log('ICE кандидат:', event.candidate);
+                    socket.send(JSON.stringify({
+                        type: 'webrtc',
+                        receiver: currentCallTarget,
+                        payload: JSON.stringify({ type: 'ice_candidate', candidate: event.candidate })
+                    }));
+                }
+            };
+
+            peerConnection.ontrack = event => {
+                console.log('Получен трек от собеседника:', event.track.kind);
+                const remoteVideo = document.getElementById('remote_video');
+                
+                if (event.streams && event.streams[0]) {
+                    console.log('Устанавливаем поток на remote_video');
+                    remoteVideo.srcObject = event.streams[0];
+                } else {
+                    console.log('Создаём новый MediaStream');
+                    const stream = new MediaStream();
+                    stream.addTrack(event.track);
+                    remoteVideo.srcObject = stream;
+                }
+            };
+
+            peerConnection.onconnectionstatechange = () => {
+                console.log('Состояние соединения:', peerConnection.connectionState);
+                if (peerConnection.connectionState === 'failed') {
+                    alert('Соединение не удалось установить. Проверьте интернет.');
+                    endCall();
+                }
+            };
+
+            peerConnection.oniceconnectionstatechange = () => {
+                console.log('ICE состояние:', peerConnection.iceConnectionState);
+            };
         }
 
         async function handleWebRTCSignal(data) {
@@ -519,18 +652,24 @@
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
                     console.log('Remote description (answer) установлен');
                     
-                    // Обрабатываем накопленные ICE кандидаты
                     for (const candidate of pendingCandidates) {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                        try {
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                        } catch (err) {
+                            console.error('Ошибка добавления ICE кандидата:', err);
+                        }
                     }
                     pendingCandidates = [];
                 }
             } 
             else if (payload.type === 'ice_candidate') {
                 if (peerConnection && peerConnection.remoteDescription) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate));
+                    try {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate));
+                    } catch (err) {
+                        console.error('Ошибка добавления ICE кандидата:', err);
+                    }
                 } else {
-                    // Накапливаем кандидаты до установки remote description
                     pendingCandidates.push(payload.candidate);
                 }
             }
@@ -543,53 +682,22 @@
         async function acceptCall() {
             document.getElementById('incoming_call_modal').classList.add('hidden');
             console.log('Принимаем звонок от', currentCallTarget);
+            currentFacingMode = 'user';
             
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localStream = await getMediaStream(currentFacingMode);
                 document.getElementById('local_video').srcObject = localStream;
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
-                peerConnection = new RTCPeerConnection(servers);
-                pendingCandidates = [];
-                
-                localStream.getTracks().forEach(track => {
-                    console.log('Добавляем трек:', track.kind);
-                    peerConnection.addTrack(track);
-                });
-
-                peerConnection.onicecandidate = event => {
-                    if (event.candidate) {
-                        console.log('ICE кандидат:', event.candidate);
-                        socket.send(JSON.stringify({
-                            type: 'webrtc',
-                            receiver: currentCallTarget,
-                            payload: JSON.stringify({ type: 'ice_candidate', candidate: event.candidate })
-                        }));
-                    }
-                };
-
-                peerConnection.ontrack = event => {
-                    console.log('Получен трек от собеседника:', event.track.kind);
-                    const remoteVideo = document.getElementById('remote_video');
-                    if (event.streams && event.streams[0]) {
-                        console.log('Устанавливаем поток на remote_video');
-                        remoteVideo.srcObject = event.streams[0];
-                    } else {
-                        console.log('Создаём новый MediaStream');
-                        const stream = new MediaStream();
-                        stream.addTrack(event.track);
-                        remoteVideo.srcObject = stream;
-                    }
-                };
-
-                peerConnection.onconnectionstatechange = () => {
-                    console.log('Состояние соединения:', peerConnection.connectionState);
-                };
+                await setupPeerConnection();
 
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(window.pendingOffer));
                 console.log('Remote description (offer) установлен');
                 
-                const answer = await peerConnection.createAnswer();
+                const answer = await peerConnection.createAnswer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: true
+                });
                 await peerConnection.setLocalDescription(answer);
                 console.log('Answer создан и установлен');
 
@@ -602,6 +710,35 @@
                 console.error('Ошибка при принятии звонка:', err);
                 alert('Ошибка при принятии звонка: ' + err.message);
                 rejectCall();
+            }
+        }
+
+        async function switchCamera() {
+            if (!localStream) return;
+            
+            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+            console.log('Переключаем камеру на:', currentFacingMode);
+            
+            try {
+                const newStream = await getMediaStream(currentFacingMode);
+                
+                // Заменяем видео трек в peerConnection
+                const videoTrack = newStream.getVideoTracks()[0];
+                const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                
+                if (sender) {
+                    await sender.replaceTrack(videoTrack);
+                    console.log('Видео трек заменён');
+                }
+                
+                // Обновляем локальное видео
+                localStream.getVideoTracks().forEach(track => track.stop());
+                localStream = newStream;
+                document.getElementById('local_video').srcObject = newStream;
+                
+            } catch (err) {
+                console.error('Ошибка переключения камеры:', err);
+                alert('Не удалось переключить камеру: ' + err.message);
             }
         }
 
