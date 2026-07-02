@@ -33,6 +33,7 @@ type Message struct {
 	Text      string   `json:"text"`
 	Image     string   `json:"image,omitempty"`
 	FileName  string   `json:"file_name,omitempty"`
+	Payload   string   `json:"payload,omitempty"` // Для WebRTC сигналинга
 	Users     []string `json:"users,omitempty"`
 	Receiver  string   `json:"receiver,omitempty"`
 	GroupID   int      `json:"group_id,omitempty"`
@@ -64,18 +65,15 @@ func initDB() {
 	}
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL)`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, text TEXT, image TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS private_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, receiver TEXT, text TEXT, image TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS private_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, receiver TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, creator TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 
-	// Миграции для добавления новых колонок
 	db.Exec("ALTER TABLE messages ADD COLUMN image TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE private_messages ADD COLUMN image TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE group_messages ADD COLUMN image TEXT DEFAULT ''")
-
-	// Добавляем колонку для имени файла
 	db.Exec("ALTER TABLE messages ADD COLUMN file_name TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE private_messages ADD COLUMN file_name TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE group_messages ADD COLUMN file_name TEXT DEFAULT ''")
@@ -232,6 +230,13 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			handleTyping(msg)
 			continue
 		}
+
+		// WebRTC Сигналинг (пересылка напрямую между двумя пользователями)
+		if msg.Type == "webrtc" && msg.Receiver != "" {
+			handleWebRTC(msg)
+			continue
+		}
+
 		if msg.Type == "group_message" && msg.GroupID != 0 {
 			db.Exec("INSERT INTO group_messages (group_id, username, text, image, file_name) VALUES (?, ?, ?, ?, ?)", msg.GroupID, username, msg.Text, msg.Image, msg.FileName)
 			handleGroupMessage(msg)
@@ -242,6 +247,17 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			db.Exec("INSERT INTO messages (username, text, image, file_name) VALUES (?, ?, ?, ?)", username, msg.Text, msg.Image, msg.FileName)
 			msg.Type = "message"
 			broadcast <- msg
+		}
+	}
+}
+
+func handleWebRTC(msg Message) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	for conn, client := range clients {
+		if client.Username == msg.Receiver {
+			conn.WriteJSON(msg)
+			return
 		}
 	}
 }
