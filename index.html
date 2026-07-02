@@ -59,82 +59,31 @@
         .modal-content .btn-accept { background: #28a745; }
         .modal-content .btn-reject { background: #dc3545; }
         
-        /* Окно видеозвонка */
         .call-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: #000;
-            display: flex;
-            flex-direction: column;
-            z-index: 300;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #000; display: flex; flex-direction: column; z-index: 300;
         }
-        .video-container {
-            flex: 1;
-            position: relative;
-            overflow: hidden;
-            min-height: 0;
-        }
-        .remote-video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            background: #1a1a1a;
-            display: block;
-        }
+        .video-container { flex: 1; position: relative; overflow: hidden; min-height: 0; }
+        .remote-video { width: 100%; height: 100%; object-fit: cover; background: #1a1a1a; display: block; }
         .local-video {
-            position: absolute;
-            bottom: 100px;
-            right: 20px;
-            width: 140px;
-            height: 105px;
-            object-fit: cover;
-            border: 3px solid rgba(255,255,255,0.8);
-            border-radius: 12px;
-            background: #333;
-            z-index: 10;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            position: absolute; bottom: 100px; right: 20px; width: 140px; height: 105px;
+            object-fit: cover; border: 3px solid rgba(255,255,255,0.8); border-radius: 12px;
+            background: #333; z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
         .call-status {
-            position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.6);
-            color: white;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 14px;
-            z-index: 15;
-            backdrop-filter: blur(10px);
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.6); color: white; padding: 8px 16px;
+            border-radius: 20px; font-size: 14px; z-index: 15; backdrop-filter: blur(10px);
         }
         .call-controls {
-            position: absolute;
-            bottom: 30px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 20px;
-            z-index: 20;
-            background: rgba(0,0,0,0.4);
-            padding: 15px 25px;
-            border-radius: 30px;
-            backdrop-filter: blur(10px);
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 20px; z-index: 20; background: rgba(0,0,0,0.4);
+            padding: 15px 25px; border-radius: 30px; backdrop-filter: blur(10px);
         }
         .call-btn {
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            border: none;
-            cursor: pointer;
-            font-size: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.2s, opacity 0.2s;
-            color: white;
+            width: 60px; height: 60px; border-radius: 50%; border: none;
+            cursor: pointer; font-size: 24px; display: flex; align-items: center;
+            justify-content: center; transition: transform 0.2s, opacity 0.2s; color: white;
         }
         .call-btn:hover { transform: scale(1.1); }
         .call-btn:active { transform: scale(0.95); }
@@ -191,7 +140,7 @@
             <div id="typing_status"></div>
             <div class="chat-input">
                 <input type="file" id="file_input" style="display:none" onchange="handleFileSelect(event)">
-                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить файл"></button>
+                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить файл">📎</button>
                 <input type="text" id="msg_input" placeholder="Напишите сообщение..." onkeypress="if(event.key==='Enter') sendMessage()" onkeyup="handleTyping()">
                 <button class="btn-send" onclick="sendMessage()">➤</button>
             </div>
@@ -238,6 +187,7 @@
         let localStream, peerConnection, currentCallTarget = '';
         let pendingCandidates = [], remoteStream = null;
         let currentFacingMode = 'user', isMuted = false;
+        let hasAudio = false, hasVideo = false, remoteAttached = false;
         const servers = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -379,36 +329,17 @@
             catch(e) { try { return await navigator.mediaDevices.getUserMedia({video:true,audio:true}); } catch(e2) { throw e2; } }
         }
 
-        function playVideo(videoEl) {
-            return new Promise(function(resolve) {
-                videoEl.play().then(function() { resolve(true); }).catch(function(err) {
-                    console.warn('Autoplay blocked, trying muted:', err);
-                    videoEl.muted = true;
-                    videoEl.play().then(function() { resolve(true); }).catch(function(err2) {
-                        console.error('Play failed:', err2);
-                        resolve(false);
-                    });
-                });
-            });
-        }
-
         function updateCallStatus(text) {
             document.getElementById('call_status').textContent = text;
-        }
-
-        function attachRemoteStream(stream) {
-            var rv = document.getElementById('remote_video');
-            rv.srcObject = stream;
-            playVideo(rv);
-            setTimeout(function() { if (rv.paused && rv.srcObject) playVideo(rv); }, 500);
-            setTimeout(function() { if (rv.paused && rv.srcObject) playVideo(rv); }, 1500);
-            setTimeout(function() { if (rv.paused && rv.srcObject) playVideo(rv); }, 3000);
         }
 
         async function setupPC() {
             peerConnection = new RTCPeerConnection(servers);
             pendingCandidates = [];
             remoteStream = new MediaStream();
+            hasAudio = false;
+            hasVideo = false;
+            remoteAttached = false;
 
             localStream.getTracks().forEach(function(track) {
                 peerConnection.addTrack(track, localStream);
@@ -423,9 +354,30 @@
             peerConnection.ontrack = function(event) {
                 console.log('ontrack:', event.track.kind);
                 remoteStream.addTrack(event.track);
-                if (!document.getElementById('remote_video').srcObject) {
-                    attachRemoteStream(remoteStream);
-                    updateCallStatus('Видео подключено');
+                
+                if (event.track.kind === 'audio') hasAudio = true;
+                if (event.track.kind === 'video') hasVideo = true;
+                
+                // Прикрепляем поток только один раз, когда есть хотя бы один трек
+                if (!remoteAttached) {
+                    remoteAttached = true;
+                    var rv = document.getElementById('remote_video');
+                    rv.srcObject = remoteStream;
+                    
+                    // Пытаемся воспроизвести
+                    rv.play().then(function() {
+                        console.log('Remote video playing');
+                        updateCallStatus('Подключено');
+                    }).catch(function(err) {
+                        console.warn('Autoplay blocked, trying muted:', err);
+                        rv.muted = true;
+                        rv.play().then(function() {
+                            updateCallStatus('Подключено (звук выключен)');
+                        }).catch(function(err2) {
+                            console.error('Play failed:', err2);
+                            updateCallStatus('Нажмите для воспроизведения');
+                        });
+                    });
                 }
             };
 
@@ -535,6 +487,7 @@
             if (currentCallTarget && socket && socket.readyState === 1)
                 socket.send(JSON.stringify({ type:'webrtc', receiver:currentCallTarget, payload: JSON.stringify({type:'end_call'}) }));
             currentCallTarget = ''; pendingCandidates = []; remoteStream = null; isMuted = false;
+            hasAudio = false; hasVideo = false; remoteAttached = false;
         }
     </script>
 </body>
