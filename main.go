@@ -1,0 +1,376 @@
+package main
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"sync"
+
+	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/bcrypt"
+	_ "modernc.org/sqlite"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+type Client struct {
+	Conn     *websocket.Conn
+	Username string
+}
+
+var clients = make(map[*websocket.Conn]*Client)
+var broadcast = make(chan Message, 10)
+var mutex = &sync.Mutex{}
+var db *sql.DB
+
+type Message struct {
+	Type      string   `json:"type"`
+	Username  string   `json:"username"`
+	Text      string   `json:"text"`
+	Image     string   `json:"image,omitempty"`
+	Users     []string `json:"users,omitempty"`
+	Receiver  string   `json:"receiver,omitempty"`
+	GroupID   int      `json:"group_id,omitempty"`
+	GroupName string   `json:"group_name,omitempty"`
+}
+
+type AuthRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type AuthResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+type GroupRequest struct {
+	Name     string `json:"name"`
+	Creator  string `json:"creator"`
+	GroupID  int    `json:"group_id"`
+	Username string `json:"username"`
+}
+
+func initDB() {
+	var err error
+	db, err = sql.Open("sqlite", "messenger.db")
+	if err != nil {
+		panic(err)
+	}
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, text TEXT, image TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS private_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, receiver TEXT, text TEXT, image TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, creator TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+
+	db.Exec("ALTER TABLE messages ADD COLUMN image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE private_messages ADD COLUMN image TEXT DEFAULT ''")
+}
+
+func registerHandler(w http.ResponseWriter, r *http.Request) {
+	var req AuthRequest
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.Username == "" || req.Password == "" {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Заполните все поля"})
+		return
+	}
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM users WHERE username = ?", req.Username).Scan(&count)
+	if count > 0 {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Пользователь уже существует"})
+		return
+	}
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	db.Exec("INSERT INTO users (username, password) VALUES (?, ?)", req.Username, string(hashedPassword))
+	json.NewEncoder(w).Encode(AuthResponse{Success: true})
+}
+
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	var req AuthRequest
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.Username == "" || req.Password == "" {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Заполните все поля"})
+		return
+	}
+	var hashedPassword string
+	err := db.QueryRow("SELECT password FROM users WHERE username = ?", req.Username).Scan(&hashedPassword)
+	if err != nil {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Неверное имя или пароль"})
+		return
+	}
+	err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password))
+	if err != nil {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Неверное имя или пароль"})
+		return
+	}
+	json.NewEncoder(w).Encode(AuthResponse{Success: true})
+}
+
+func createGroupHandler(w http.ResponseWriter, r *http.Request) {
+	var req GroupRequest
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.Name == "" || req.Creator == "" {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Заполните все поля"})
+		return
+	}
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM groups WHERE name = ?", req.Name).Scan(&count)
+	if count > 0 {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Группа уже существует"})
+		return
+	}
+	result, _ := db.Exec("INSERT INTO groups (name, creator) VALUES (?, ?)", req.Name, req.Creator)
+	groupID, _ := result.LastInsertId()
+	db.Exec("INSERT INTO group_members (group_id, username) VALUES (?, ?)", groupID, req.Creator)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "group_id": groupID})
+}
+
+func groupsHandler(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+	rows, _ := db.Query(`SELECT g.id, g.name FROM groups g JOIN group_members gm ON g.id = gm.group_id WHERE gm.username = ?`, username)
+	defer rows.Close()
+	var groups []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var name string
+		rows.Scan(&id, &name)
+		groups = append(groups, map[string]interface{}{"id": id, "name": name})
+	}
+	json.NewEncoder(w).Encode(groups)
+}
+
+func availableGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+	rows, _ := db.Query(`SELECT g.id, g.name FROM groups g WHERE g.id NOT IN (SELECT group_id FROM group_members WHERE username = ?)`, username)
+	defer rows.Close()
+	var groups []map[string]interface{}
+	for rows.Next() {
+		var id int
+		var name string
+		rows.Scan(&id, &name)
+		groups = append(groups, map[string]interface{}{"id": id, "name": name})
+	}
+	json.NewEncoder(w).Encode(groups)
+}
+
+func joinGroupHandler(w http.ResponseWriter, r *http.Request) {
+	var req GroupRequest
+	json.NewDecoder(r.Body).Decode(&req)
+	_, err := db.Exec("INSERT INTO group_members (group_id, username) VALUES (?, ?)", req.GroupID, req.Username)
+	if err != nil {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Ошибка вступления"})
+		return
+	}
+	json.NewEncoder(w).Encode(AuthResponse{Success: true})
+}
+
+func groupHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	groupID := r.URL.Query().Get("group_id")
+	rows, _ := db.Query(`SELECT username, text, image FROM group_messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT 50`, groupID)
+	defer rows.Close()
+	var history []map[string]string
+	for rows.Next() {
+		var u, t, img string
+		rows.Scan(&u, &t, &img)
+		history = append(history, map[string]string{"username": u, "text": t, "image": img})
+	}
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
+	}
+	json.NewEncoder(w).Encode(history)
+}
+
+func wsHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	var regMsg Message
+	if conn.ReadJSON(&regMsg) != nil || regMsg.Type != "register" {
+		return
+	}
+
+	username := regMsg.Username
+	client := &Client{Conn: conn, Username: username}
+
+	mutex.Lock()
+	clients[conn] = client
+	mutex.Unlock()
+
+	broadcast <- Message{Type: "system", Username: "Система", Text: username + " вошёл в чат"}
+	sendUserList()
+
+	for {
+		var msg Message
+		if conn.ReadJSON(&msg) != nil {
+			mutex.Lock()
+			delete(clients, conn)
+			mutex.Unlock()
+			broadcast <- Message{Type: "system", Username: "Система", Text: username + " вышел из чата"}
+			sendUserList()
+			break
+		}
+		msg.Username = username
+
+		if msg.Type == "typing" {
+			handleTyping(msg)
+			continue
+		}
+		if msg.Type == "group_message" && msg.GroupID != 0 {
+			db.Exec("INSERT INTO group_messages (group_id, username, text, image) VALUES (?, ?, ?, ?)", msg.GroupID, username, msg.Text, msg.Image)
+			handleGroupMessage(msg)
+		} else if msg.Type == "private" && msg.Receiver != "" {
+			db.Exec("INSERT INTO private_messages (sender, receiver, text, image) VALUES (?, ?, ?, ?)", username, msg.Receiver, msg.Text, msg.Image)
+			handlePrivateMessage(msg)
+		} else {
+			db.Exec("INSERT INTO messages (username, text, image) VALUES (?, ?, ?)", username, msg.Text, msg.Image)
+			msg.Type = "message"
+			broadcast <- msg
+		}
+	}
+}
+
+func handleTyping(msg Message) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	for conn, client := range clients {
+		if client.Username != msg.Username {
+			conn.WriteJSON(msg)
+		}
+	}
+}
+
+func handlePrivateMessage(msg Message) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	for conn, client := range clients {
+		if client.Username == msg.Receiver || client.Username == msg.Username {
+			conn.WriteJSON(msg)
+		}
+	}
+}
+
+func handleGroupMessage(msg Message) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	rows, _ := db.Query("SELECT username FROM group_members WHERE group_id = ?", msg.GroupID)
+	defer rows.Close()
+	var members []string
+	for rows.Next() {
+		var u string
+		rows.Scan(&u)
+		members = append(members, u)
+	}
+	for conn, client := range clients {
+		for _, member := range members {
+			if client.Username == member {
+				conn.WriteJSON(msg)
+				break
+			}
+		}
+	}
+}
+
+func sendUserList() {
+	mutex.Lock()
+	defer mutex.Unlock()
+	var users []string
+	for _, client := range clients {
+		users = append(users, client.Username)
+	}
+	msg := Message{Type: "user_list", Users: users}
+	for conn := range clients {
+		conn.WriteJSON(msg)
+	}
+}
+
+func handleMessages() {
+	for {
+		msg := <-broadcast
+		mutex.Lock()
+		for conn := range clients {
+			if err := conn.WriteJSON(msg); err != nil {
+				conn.Close()
+				delete(clients, conn)
+			}
+		}
+		mutex.Unlock()
+	}
+}
+
+func historyHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT username, text, image FROM messages ORDER BY timestamp DESC LIMIT 50")
+	if err != nil {
+		json.NewEncoder(w).Encode([]map[string]string{})
+		return
+	}
+	defer rows.Close()
+	var history []map[string]string
+	for rows.Next() {
+		var u, t, img string
+		rows.Scan(&u, &t, &img)
+		history = append(history, map[string]string{"username": u, "text": t, "image": img})
+	}
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
+	}
+	json.NewEncoder(w).Encode(history)
+}
+
+func privateHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	user1 := r.URL.Query().Get("user1")
+	user2 := r.URL.Query().Get("user2")
+	rows, err := db.Query(`SELECT sender, text, image FROM private_messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY timestamp DESC LIMIT 50`, user1, user2, user2, user1)
+	if err != nil {
+		json.NewEncoder(w).Encode([]map[string]string{})
+		return
+	}
+	defer rows.Close()
+	var history []map[string]string
+	for rows.Next() {
+		var s, t, img string
+		rows.Scan(&s, &t, &img)
+		history = append(history, map[string]string{"sender": s, "text": t, "image": img})
+	}
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
+	}
+	json.NewEncoder(w).Encode(history)
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "index.html")
+}
+
+func main() {
+	initDB()
+	go handleMessages()
+
+	http.HandleFunc("/", homeHandler)
+	http.HandleFunc("/ws", wsHandler)
+	http.HandleFunc("/history", historyHandler)
+	http.HandleFunc("/private_history", privateHistoryHandler)
+	http.HandleFunc("/register", registerHandler)
+	http.HandleFunc("/login", loginHandler)
+	http.HandleFunc("/create_group", createGroupHandler)
+	http.HandleFunc("/groups", groupsHandler)
+	http.HandleFunc("/available_groups", availableGroupsHandler)
+	http.HandleFunc("/join_group", joinGroupHandler)
+	http.HandleFunc("/group_history", groupHistoryHandler)
+
+	// Render сам задает порт через переменную PORT
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	fmt.Printf("Сервер запущен на порту %s\n", port)
+	http.ListenAndServe(":"+port, nil)
+}

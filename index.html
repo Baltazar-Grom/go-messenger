@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Go Мессенджер</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: sans-serif; background: #f0f2f5; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        .app-container { display: flex; width: 900px; height: 650px; background: #fff; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        .sidebar { width: 250px; background: #f8f9fa; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
+        .sidebar-header { background: #0084ff; color: white; padding: 15px; font-weight: bold; text-align: center; }
+        .online-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .online-list h3 { font-size: 14px; color: #666; margin-bottom: 10px; margin-top: 15px; }
+        .user-item, .group-item { padding: 10px; background: white; margin-bottom: 5px; border-radius: 5px; display: flex; align-items: center; cursor: pointer; transition: background 0.2s; }
+        .user-item:hover, .group-item:hover { background: #e9ecef; }
+        .user-item.active, .group-item.active { background: #0084ff; color: white; }
+        .user-item .status { width: 8px; height: 8px; background: #4caf50; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .group-item .icon { margin-right: 8px; }
+        .chat-area { flex: 1; display: flex; flex-direction: column; }
+        .chat-header { background: #0084ff; color: white; padding: 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+        .chat-header button { background: rgba(255,255,255,0.2); border: none; color: white; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+        .chat-messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; }
+        .message { margin-bottom: 10px; max-width: 70%; }
+        .message .meta { font-size: 12px; color: #666; margin-bottom: 2px; }
+        .message .bubble { background: #e4e6eb; padding: 10px; border-radius: 15px; word-wrap: break-word; }
+        .message .bubble img { max-width: 200px; border-radius: 8px; display: block; margin-bottom: 5px; cursor: pointer; }
+        .message.own { align-self: flex-end; }
+        .message.own .bubble { background: #0084ff; color: white; }
+        .message.own .meta { text-align: right; color: #999; }
+        .message.system { align-self: center; max-width: 100%; }
+        .message.system .bubble { background: #fff3cd; color: #856404; font-style: italic; }
+        #typing_status { padding: 0 15px; color: #888; font-size: 14px; height: 20px; font-style: italic; }
+        .chat-input { display: flex; padding: 10px; border-top: 1px solid #ddd; align-items: center; }
+        .chat-input input[type="text"] { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 20px; outline: none; margin: 0 10px; }
+        .chat-input button { border: none; padding: 10px 15px; border-radius: 20px; cursor: pointer; color: white; font-size: 16px; }
+        .btn-send { background: #0084ff; }
+        .btn-attach { background: #28a745; }
+        
+        .login-screen { position: fixed; width: 350px; background: #fff; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 100; padding: 40px; }
+        .login-screen h2 { margin-bottom: 20px; }
+        .login-screen input { padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px; }
+        .login-screen button { padding: 12px; width: 100%; background: #0084ff; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-bottom: 10px; }
+        .login-screen .toggle-link { margin-top: 10px; cursor: pointer; color: #0084ff; font-size: 14px; }
+        .login-screen .error { color: red; margin-top: 10px; font-size: 14px; height: 20px; }
+        
+        .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 200; }
+        .modal-content { background: white; padding: 30px; border-radius: 10px; width: 400px; }
+        .modal-content h3 { margin-bottom: 20px; }
+        .modal-content input { padding: 10px; width: 100%; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .modal-content button { padding: 10px 20px; background: #0084ff; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px; }
+        .modal-content .btn-cancel { background: #6c757d; }
+        
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="login-screen" id="login_screen">
+        <h2 id="auth_title">Вход</h2>
+        <input type="text" id="username_input" placeholder="Имя пользователя">
+        <input type="password" id="password_input" placeholder="Пароль">
+        <button onclick="submitAuth()" id="auth_btn">Войти</button>
+        <div class="toggle-link" onclick="toggleAuthMode()">
+            <span id="toggle_text">Нет аккаунта? Зарегистрироваться</span>
+        </div>
+        <div class="error" id="auth_error"></div>
+    </div>
+
+    <div class="app-container hidden" id="app_container">
+        <div class="sidebar">
+            <div class="sidebar-header">Контакты</div>
+            <div class="online-list">
+                <h3>Онлайн (<span id="online_count">0</span>)</h3>
+                <div id="user_item_general" class="user-item active" onclick="switchToGeneral()">
+                    <span class="status"></span>Общий чат
+                </div>
+                <div id="online_users_list"></div>
+                
+                <h3>Группы <button onclick="showCreateGroupModal()" style="background:#0084ff; color:white; border:none; padding:3px 8px; border-radius:3px; cursor:pointer; font-size:12px;">+</button></h3>
+                <div id="groups_list"></div>
+                
+                <h3>Доступные группы</h3>
+                <div id="available_groups_list"></div>
+            </div>
+        </div>
+
+        <div class="chat-area">
+            <div class="chat-header">
+                <span id="chat_header">Общий чат</span>
+                <button onclick="logout()">Выйти</button>
+            </div>
+            <div class="chat-messages" id="messages"></div>
+            <div id="typing_status"></div>
+            <div class="chat-input">
+                <input type="file" id="file_input" accept="image/*" style="display:none" onchange="handleFileSelect(event)">
+                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить картинку">📎</button>
+                <input type="text" id="msg_input" placeholder="Напишите сообщение..." onkeypress="if(event.key==='Enter') sendMessage()" onkeyup="handleTyping()">
+                <button class="btn-send" onclick="sendMessage()">➤</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal hidden" id="create_group_modal">
+        <div class="modal-content">
+            <h3>Создать группу</h3>
+            <input type="text" id="group_name_input" placeholder="Название группы">
+            <button onclick="createGroup()">Создать</button>
+            <button class="btn-cancel" onclick="hideCreateGroupModal()">Отмена</button>
+        </div>
+    </div>
+
+    <script>
+        var socket;
+        var messagesDiv = document.getElementById('messages');
+        var currentUser = '';
+        var currentChat = 'general';
+        var currentGroupID = 0;
+        var isRegisterMode = false;
+        var statusDiv = document.getElementById('typing_status');
+        var statusTimer;
+
+        function toggleAuthMode() {
+            isRegisterMode = !isRegisterMode;
+            document.getElementById('auth_title').textContent = isRegisterMode ? 'Регистрация' : 'Вход';
+            document.getElementById('auth_btn').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
+            document.getElementById('toggle_text').textContent = isRegisterMode ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться';
+            document.getElementById('auth_error').textContent = '';
+        }
+
+        function submitAuth() {
+            var username = document.getElementById('username_input').value.trim();
+            var password = document.getElementById('password_input').value;
+            var errorDiv = document.getElementById('auth_error');
+            errorDiv.textContent = '';
+
+            if (!username || !password) {
+                errorDiv.textContent = 'Заполните все поля';
+                return;
+            }
+
+            var url = isRegisterMode ? '/register' : '/login';
+
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username, password: password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    currentUser = username;
+                    localStorage.setItem('messenger_username', username);
+                    document.getElementById('login_screen').classList.add('hidden');
+                    document.getElementById('app_container').classList.remove('hidden');
+                    connectWebSocket();
+                } else {
+                    errorDiv.textContent = data.message || 'Ошибка';
+                }
+            })
+            .catch(() => {
+                errorDiv.textContent = 'Ошибка соединения с сервером';
+            });
+        }
+
+        function logout() {
+            localStorage.removeItem('messenger_username');
+            location.reload();
+        }
+
+        function connectWebSocket() {
+            socket = new WebSocket("ws://localhost:8080/ws");
+            
+            socket.onopen = function() {
+                socket.send(JSON.stringify({ type: "register", username: currentUser }));
+                loadGeneralHistory();
+                loadGroups();
+                loadAvailableGroups();
+            };
+            
+            socket.onmessage = function(event) {
+                var data = JSON.parse(event.data);
+                
+                if (data.type === "typing") {
+                    statusDiv.textContent = data.username + ' печатает...';
+                    clearTimeout(statusTimer);
+                    statusTimer = setTimeout(function() {
+                        statusDiv.textContent = '';
+                    }, 2000);
+                    return;
+                }
+                
+                if (data.type === "message") {
+                    if (currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.username === currentUser);
+                } else if (data.type === "private") {
+                    var partner = data.username === currentUser ? data.receiver : data.username;
+                    if (currentChat === partner) addMessageToUI(data.username, data.text, data.image, data.username === currentUser);
+                } else if (data.type === "group_message") {
+                    if (currentChat === 'group' && currentGroupID === data.group_id) {
+                        addMessageToUI(data.username, data.text, data.image, data.username === currentUser);
+                    }
+                } else if (data.type === "user_list") {
+                    updateUserList(data.users);
+                } else if (data.type === "system") {
+                    if (currentChat === 'general') addSystemMessage(data.text);
+                }
+            };
+        }
+
+        window.onload = function() {
+            var savedName = localStorage.getItem('messenger_username');
+            if (savedName) {
+                currentUser = savedName;
+                document.getElementById('login_screen').classList.add('hidden');
+                document.getElementById('app_container').classList.remove('hidden');
+                connectWebSocket();
+            }
+        };
+
+        function switchToGeneral() {
+            currentChat = 'general';
+            currentGroupID = 0;
+            document.getElementById('chat_header').textContent = 'Общий чат';
+            document.querySelectorAll('.user-item, .group-item').forEach(el => el.classList.remove('active'));
+            document.getElementById('user_item_general').classList.add('active');
+            messagesDiv.innerHTML = '';
+            loadGeneralHistory();
+        }
+
+        function switchToPrivate(username) {
+            currentChat = username;
+            currentGroupID = 0;
+            document.getElementById('chat_header').textContent = 'Чат с ' + username;
+            document.querySelectorAll('.user-item, .group-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            messagesDiv.innerHTML = '';
+            loadPrivateHistory(username);
+        }
+
+        function switchToGroup(groupID, groupName) {
+            currentChat = 'group';
+            currentGroupID = groupID;
+            document.getElementById('chat_header').textContent = 'Группа: ' + groupName;
+            document.querySelectorAll('.user-item, .group-item').forEach(el => el.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            messagesDiv.innerHTML = '';
+            loadGroupHistory(groupID);
+        }
+
+        function loadGeneralHistory() {
+            fetch('/history')
+                .then(res => res.json())
+                .then(data => {
+                    if(data) data.forEach(msg => addMessageToUI(msg.username, msg.text, msg.image, msg.username === currentUser));
+                });
+        }
+
+        function loadPrivateHistory(partner) {
+            fetch(`/private_history?user1=${currentUser}&user2=${partner}`)
+                .then(res => res.json())
+                .then(data => {
+                    if(data) data.forEach(msg => addMessageToUI(msg.sender, msg.text, msg.image, msg.sender === currentUser));
+                });
+        }
+
+        function loadGroupHistory(groupID) {
+            fetch(`/group_history?group_id=${groupID}`)
+                .then(res => res.json())
+                .then(data => {
+                    if(data) data.forEach(msg => addMessageToUI(msg.username, msg.text, msg.image, msg.username === currentUser));
+                });
+        }
+
+        function loadGroups() {
+            fetch(`/groups?username=${currentUser}`)
+                .then(res => res.json())
+                .then(data => {
+                    var list = document.getElementById('groups_list');
+                    list.innerHTML = '';
+                    if(data) {
+                        data.forEach(group => {
+                            var div = document.createElement('div');
+                            div.className = 'group-item';
+                            div.innerHTML = '<span class="icon">👥</span>' + group.name;
+                            div.onclick = function(e) { switchToGroup(group.id, group.name); };
+                            list.appendChild(div);
+                        });
+                    }
+                });
+        }
+
+        function loadAvailableGroups() {
+            fetch(`/available_groups?username=${currentUser}`)
+                .then(res => res.json())
+                .then(data => {
+                    var list = document.getElementById('available_groups_list');
+                    list.innerHTML = '';
+                    if(data) {
+                        data.forEach(group => {
+                            var div = document.createElement('div');
+                            div.className = 'group-item';
+                            div.innerHTML = '<span class="icon">🔓</span>' + group.name + ' <button onclick="joinGroup(' + group.id + ')" style="margin-left:auto; background:#28a745; color:white; border:none; padding:3px 8px; border-radius:3px; cursor:pointer;">Вступить</button>';
+                            list.appendChild(div);
+                        });
+                    }
+                });
+        }
+
+        function showCreateGroupModal() {
+            document.getElementById('create_group_modal').classList.remove('hidden');
+        }
+
+        function hideCreateGroupModal() {
+            document.getElementById('create_group_modal').classList.add('hidden');
+            document.getElementById('group_name_input').value = '';
+        }
+
+        function createGroup() {
+            var name = document.getElementById('group_name_input').value.trim();
+            if (!name) {
+                alert('Введите название группы');
+                return;
+            }
+
+            fetch('/create_group', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, creator: currentUser })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    hideCreateGroupModal();
+                    loadGroups();
+                    loadAvailableGroups();
+                } else {
+                    alert(data.message || 'Ошибка создания группы');
+                }
+            });
+        }
+
+        function joinGroup(groupID) {
+            fetch('/join_group', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ group_id: groupID, username: currentUser })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    loadGroups();
+                    loadAvailableGroups();
+                } else {
+                    alert(data.message || 'Ошибка вступления');
+                }
+            });
+        }
+
+        function updateUserList(users) {
+            var list = document.getElementById('online_users_list');
+            list.innerHTML = '';
+            var others = users.filter(u => u !== currentUser);
+            document.getElementById('online_count').textContent = others.length;
+            
+            others.forEach(function(username) {
+                var div = document.createElement('div');
+                div.className = 'user-item';
+                div.innerHTML = '<span class="status"></span>' + username;
+                div.onclick = function() { switchToPrivate(username); };
+                list.appendChild(div);
+            });
+        }
+
+        function addMessageToUI(username, text, image, isOwn) {
+            var div = document.createElement('div');
+            div.className = 'message' + (isOwn ? ' own' : '');
+            
+            var content = '<div class="meta">' + username + '</div><div class="bubble">';
+            if (image) {
+                content += '<img src="' + image + '" onclick="window.open(this.src)">';
+            }
+            if (text) {
+                content += text;
+            }
+            content += '</div>';
+            
+            div.innerHTML = content;
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            var div = document.createElement('div');
+            div.className = 'message system';
+            div.innerHTML = '<div class="bubble">' + text + '</div>';
+            messagesDiv.appendChild(div);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function handleTyping() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'typing', username: currentUser }));
+            }
+        }
+
+        function handleFileSelect(event) {
+            var file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.size > 2 * 1024 * 1024) {
+                alert('Файл слишком большой! Максимум 2 МБ.');
+                return;
+            }
+            
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var base64 = e.target.result;
+                
+                var msg = {
+                    text: '',
+                    image: base64
+                };
+                
+                if (currentChat === 'general') {
+                    msg.type = 'message';
+                } else if (currentChat === 'group') {
+                    msg.type = 'group_message';
+                    msg.group_id = currentGroupID;
+                } else {
+                    msg.type = 'private';
+                    msg.receiver = currentChat;
+                }
+                
+                socket.send(JSON.stringify(msg));
+            };
+            reader.readAsDataURL(file);
+            event.target.value = '';
+        }
+
+        function sendMessage() {
+            var input = document.getElementById('msg_input');
+            if (input.value.trim() !== '') {
+                var msg = { text: input.value };
+                
+                if (currentChat === 'general') {
+                    msg.type = 'message';
+                } else if (currentChat === 'group') {
+                    msg.type = 'group_message';
+                    msg.group_id = currentGroupID;
+                } else {
+                    msg.type = 'private';
+                    msg.receiver = currentChat;
+                }
+                
+                socket.send(JSON.stringify(msg));
+                input.value = '';
+            }
+        }
+    </script>
+</body>
+</html>
