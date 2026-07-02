@@ -32,6 +32,7 @@ type Message struct {
 	Username  string   `json:"username"`
 	Text      string   `json:"text"`
 	Image     string   `json:"image,omitempty"`
+	FileName  string   `json:"file_name,omitempty"`
 	Users     []string `json:"users,omitempty"`
 	Receiver  string   `json:"receiver,omitempty"`
 	GroupID   int      `json:"group_id,omitempty"`
@@ -69,8 +70,15 @@ func initDB() {
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 
+	// Миграции для добавления новых колонок
 	db.Exec("ALTER TABLE messages ADD COLUMN image TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE private_messages ADD COLUMN image TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE group_messages ADD COLUMN image TEXT DEFAULT ''")
+
+	// Добавляем колонку для имени файла
+	db.Exec("ALTER TABLE messages ADD COLUMN file_name TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE private_messages ADD COLUMN file_name TEXT DEFAULT ''")
+	db.Exec("ALTER TABLE group_messages ADD COLUMN file_name TEXT DEFAULT ''")
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
@@ -172,13 +180,13 @@ func joinGroupHandler(w http.ResponseWriter, r *http.Request) {
 
 func groupHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	groupID := r.URL.Query().Get("group_id")
-	rows, _ := db.Query(`SELECT username, text, image FROM group_messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT 50`, groupID)
+	rows, _ := db.Query(`SELECT username, text, image, file_name FROM group_messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT 50`, groupID)
 	defer rows.Close()
-	var history []map[string]string
+	var history []map[string]interface{}
 	for rows.Next() {
-		var u, t, img string
-		rows.Scan(&u, &t, &img)
-		history = append(history, map[string]string{"username": u, "text": t, "image": img})
+		var u, t, img, fn string
+		rows.Scan(&u, &t, &img, &fn)
+		history = append(history, map[string]interface{}{"username": u, "text": t, "image": img, "file_name": fn})
 	}
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
 		history[i], history[j] = history[j], history[i]
@@ -225,13 +233,13 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if msg.Type == "group_message" && msg.GroupID != 0 {
-			db.Exec("INSERT INTO group_messages (group_id, username, text, image) VALUES (?, ?, ?, ?)", msg.GroupID, username, msg.Text, msg.Image)
+			db.Exec("INSERT INTO group_messages (group_id, username, text, image, file_name) VALUES (?, ?, ?, ?, ?)", msg.GroupID, username, msg.Text, msg.Image, msg.FileName)
 			handleGroupMessage(msg)
 		} else if msg.Type == "private" && msg.Receiver != "" {
-			db.Exec("INSERT INTO private_messages (sender, receiver, text, image) VALUES (?, ?, ?, ?)", username, msg.Receiver, msg.Text, msg.Image)
+			db.Exec("INSERT INTO private_messages (sender, receiver, text, image, file_name) VALUES (?, ?, ?, ?, ?)", username, msg.Receiver, msg.Text, msg.Image, msg.FileName)
 			handlePrivateMessage(msg)
 		} else {
-			db.Exec("INSERT INTO messages (username, text, image) VALUES (?, ?, ?)", username, msg.Text, msg.Image)
+			db.Exec("INSERT INTO messages (username, text, image, file_name) VALUES (?, ?, ?, ?)", username, msg.Text, msg.Image, msg.FileName)
 			msg.Type = "message"
 			broadcast <- msg
 		}
@@ -307,17 +315,17 @@ func handleMessages() {
 }
 
 func historyHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT username, text, image FROM messages ORDER BY timestamp DESC LIMIT 50")
+	rows, err := db.Query("SELECT username, text, image, file_name FROM messages ORDER BY timestamp DESC LIMIT 50")
 	if err != nil {
-		json.NewEncoder(w).Encode([]map[string]string{})
+		json.NewEncoder(w).Encode([]map[string]interface{}{})
 		return
 	}
 	defer rows.Close()
-	var history []map[string]string
+	var history []map[string]interface{}
 	for rows.Next() {
-		var u, t, img string
-		rows.Scan(&u, &t, &img)
-		history = append(history, map[string]string{"username": u, "text": t, "image": img})
+		var u, t, img, fn string
+		rows.Scan(&u, &t, &img, &fn)
+		history = append(history, map[string]interface{}{"username": u, "text": t, "image": img, "file_name": fn})
 	}
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
 		history[i], history[j] = history[j], history[i]
@@ -328,17 +336,17 @@ func historyHandler(w http.ResponseWriter, r *http.Request) {
 func privateHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	user1 := r.URL.Query().Get("user1")
 	user2 := r.URL.Query().Get("user2")
-	rows, err := db.Query(`SELECT sender, text, image FROM private_messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY timestamp DESC LIMIT 50`, user1, user2, user2, user1)
+	rows, err := db.Query(`SELECT sender, text, image, file_name FROM private_messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY timestamp DESC LIMIT 50`, user1, user2, user2, user1)
 	if err != nil {
-		json.NewEncoder(w).Encode([]map[string]string{})
+		json.NewEncoder(w).Encode([]map[string]interface{}{})
 		return
 	}
 	defer rows.Close()
-	var history []map[string]string
+	var history []map[string]interface{}
 	for rows.Next() {
-		var s, t, img string
-		rows.Scan(&s, &t, &img)
-		history = append(history, map[string]string{"sender": s, "text": t, "image": img})
+		var s, t, img, fn string
+		rows.Scan(&s, &t, &img, &fn)
+		history = append(history, map[string]interface{}{"sender": s, "text": t, "image": img, "file_name": fn})
 	}
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
 		history[i], history[j] = history[j], history[i]
@@ -366,7 +374,6 @@ func main() {
 	http.HandleFunc("/join_group", joinGroupHandler)
 	http.HandleFunc("/group_history", groupHistoryHandler)
 
-	// Render сам задает порт через переменную PORT
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

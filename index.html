@@ -24,9 +24,16 @@
         .message .meta { font-size: 12px; color: #666; margin-bottom: 2px; }
         .message .bubble { background: #e4e6eb; padding: 10px; border-radius: 15px; word-wrap: break-word; }
         .message .bubble img { max-width: 200px; border-radius: 8px; display: block; margin-bottom: 5px; cursor: pointer; }
+        .message .file-container { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.05); padding: 8px; border-radius: 8px; margin-bottom: 5px; }
+        .message .file-icon { font-size: 24px; }
+        .message .file-info { display: flex; flex-direction: column; }
+        .message .file-name { font-weight: bold; font-size: 13px; margin-bottom: 2px; word-break: break-all; }
+        .message .file-download { color: #0084ff; text-decoration: none; font-size: 12px; }
         .message.own { align-self: flex-end; }
         .message.own .bubble { background: #0084ff; color: white; }
         .message.own .meta { text-align: right; color: #999; }
+        .message.own .file-container { background: rgba(255,255,255,0.2); }
+        .message.own .file-download { color: #fff; text-decoration: underline; }
         .message.system { align-self: center; max-width: 100%; }
         .message.system .bubble { background: #fff3cd; color: #856404; font-style: italic; }
         #typing_status { padding: 0 15px; color: #888; font-size: 14px; height: 20px; font-style: italic; }
@@ -91,8 +98,8 @@
             <div class="chat-messages" id="messages"></div>
             <div id="typing_status"></div>
             <div class="chat-input">
-                <input type="file" id="file_input" accept="image/*" style="display:none" onchange="handleFileSelect(event)">
-                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить картинку">📎</button>
+                <input type="file" id="file_input" style="display:none" onchange="handleFileSelect(event)">
+                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить файл">📎</button>
                 <input type="text" id="msg_input" placeholder="Напишите сообщение..." onkeypress="if(event.key==='Enter') sendMessage()" onkeyup="handleTyping()">
                 <button class="btn-send" onclick="sendMessage()">➤</button>
             </div>
@@ -167,7 +174,6 @@
         }
 
         function connectWebSocket() {
-            // Автоматически определяем правильный URL для WebSocket
             var wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             var wsUrl = wsProtocol + '//' + window.location.host + '/ws';
             socket = new WebSocket(wsUrl);
@@ -192,13 +198,13 @@
                 }
                 
                 if (data.type === "message") {
-                    if (currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.username === currentUser);
+                    if (currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 } else if (data.type === "private") {
                     var partner = data.username === currentUser ? data.receiver : data.username;
-                    if (currentChat === partner) addMessageToUI(data.username, data.text, data.image, data.username === currentUser);
+                    if (currentChat === partner) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 } else if (data.type === "group_message") {
                     if (currentChat === 'group' && currentGroupID === data.group_id) {
-                        addMessageToUI(data.username, data.text, data.image, data.username === currentUser);
+                        addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                     }
                 } else if (data.type === "user_list") {
                     updateUserList(data.users);
@@ -252,7 +258,7 @@
             fetch('/history')
                 .then(res => res.json())
                 .then(data => {
-                    if(data) data.forEach(msg => addMessageToUI(msg.username, msg.text, msg.image, msg.username === currentUser));
+                    if(data) data.forEach(msg => addMessageToUI(msg.username, msg.text, msg.image, msg.file_name, msg.username === currentUser));
                 });
         }
 
@@ -260,7 +266,7 @@
             fetch(`/private_history?user1=${currentUser}&user2=${partner}`)
                 .then(res => res.json())
                 .then(data => {
-                    if(data) data.forEach(msg => addMessageToUI(msg.sender, msg.text, msg.image, msg.sender === currentUser));
+                    if(data) data.forEach(msg => addMessageToUI(msg.sender, msg.text, msg.image, msg.file_name, msg.sender === currentUser));
                 });
         }
 
@@ -268,7 +274,7 @@
             fetch(`/group_history?group_id=${groupID}`)
                 .then(res => res.json())
                 .then(data => {
-                    if(data) data.forEach(msg => addMessageToUI(msg.username, msg.text, msg.image, msg.username === currentUser));
+                    if(data) data.forEach(msg => addMessageToUI(msg.username, msg.text, msg.image, msg.file_name, msg.username === currentUser));
                 });
         }
 
@@ -372,14 +378,26 @@
             });
         }
 
-        function addMessageToUI(username, text, image, isOwn) {
+        function addMessageToUI(username, text, image, fileName, isOwn) {
             var div = document.createElement('div');
             div.className = 'message' + (isOwn ? ' own' : '');
             
             var content = '<div class="meta">' + username + '</div><div class="bubble">';
-            if (image) {
+            
+            // Если это файл (не картинка)
+            if (fileName) {
+                content += '<div class="file-container">';
+                content += '<span class="file-icon">📄</span>';
+                content += '<div class="file-info">';
+                content += '<span class="file-name">' + fileName + '</span>';
+                content += '<a href="' + image + '" download="' + fileName + '" class="file-download">Скачать</a>';
+                content += '</div></div>';
+            } 
+            // Если это картинка
+            else if (image) {
                 content += '<img src="' + image + '" onclick="window.open(this.src)">';
             }
+            
             if (text) {
                 content += text;
             }
@@ -408,18 +426,21 @@
             var file = event.target.files[0];
             if (!file) return;
             
-            if (file.size > 2 * 1024 * 1024) {
-                alert('Файл слишком большой! Максимум 2 МБ.');
+            // Увеличили лимит до 5 МБ для файлов
+            if (file.size > 5 * 1024 * 1024) {
+                alert('Файл слишком большой! Максимум 5 МБ.');
                 return;
             }
             
             var reader = new FileReader();
             reader.onload = function(e) {
                 var base64 = e.target.result;
+                var isImage = file.type.startsWith('image/');
                 
                 var msg = {
                     text: '',
-                    image: base64
+                    image: base64,
+                    file_name: isImage ? '' : file.name // Если картинка, file_name не передаем
                 };
                 
                 if (currentChat === 'general') {
