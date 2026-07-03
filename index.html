@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Go Мессенджер (E2E)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
+    <title>Go Мессенджер (Signal Protocol)</title>
+    <script src="https://cdn.jsdelivr.net/npm/libsignal-protocol-javascript@2.0.1/dist/libsignal-protocol.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -134,7 +134,7 @@
         <div class="auth-container">
             <div class="auth-logo">
                 <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="#0088cc"/></svg>
-                <h1>Go Мессенджер (E2E)</h1>
+                <h1>Go Мессенджер (Signal Protocol)</h1>
             </div>
             <form class="auth-form" onsubmit="submitAuth(event)">
                 <input type="text" id="usernameInput" placeholder="Имя пользователя" required>
@@ -237,99 +237,229 @@
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false, peer = null;
         
-        // E2E через TweetNaCl
-        let myKeyPair = null;
-        let myPublicKeyBase64 = null;
-        let userPublicKeys = {};
-        let sharedKeysCache = {};
-        let loadedChats = {};
+        // Signal Protocol Manager
+        let signalStore = null;
+        let signalInitialized = false;
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
-        // ==================== E2E CRYPTO ====================
-        function uint8ToBase64(arr) {
-            let binary = '';
-            for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-            return btoa(binary);
-        }
-        function base64ToUint8(base64) {
-            let binary = atob(base64);
-            let arr = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
-            return arr;
-        }
+        // ==================== SIGNAL PROTOCOL ====================
+        
+        class SignalKeyStore {
+            constructor(username) {
+                this.username = username;
+                this.storageKey = `signal_keys_${username}`;
+                this.data = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
+            }
 
-        function loadOrGenerateKeyPair() {
-            const storageKey = 'e2e_keypair_' + currentUser;
-            const savedKeys = localStorage.getItem(storageKey);
+            save() {
+                localStorage.setItem(this.storageKey, JSON.stringify(this.data));
+            }
 
-            if (savedKeys) {
-                try {
-                    const parsed = JSON.parse(savedKeys);
-                    myKeyPair = {
-                        publicKey: base64ToUint8(parsed.publicKey),
-                        secretKey: base64ToUint8(parsed.secretKey)
-                    };
-                    myPublicKeyBase64 = parsed.publicKey;
-                    console.log('✅ Ключи загружены из localStorage');
-                } catch(e) {
-                    console.warn('Ошибка загрузки, генерируем новые:', e);
-                    localStorage.removeItem(storageKey);
-                    loadOrGenerateKeyPair();
+            getIdentityKeyPair() {
+                return this.data.identityKey ? libsignal.KeyHelper.decodeBase64(this.data.identityKey) : null;
+            }
+
+            getLocalRegistrationId() {
+                return this.data.registrationId || null;
+            }
+
+            getPreKey(keyId) {
+                return this.data.preKeys && this.data.preKeys[keyId] ? libsignal.KeyHelper.decodeBase64(this.data.preKeys[keyId]) : null;
+            }
+
+            getSignedPreKey(keyId) {
+                return this.data.signedPreKeys && this.data.signedPreKeys[keyId] ? libsignal.KeyHelper.decodeBase64(this.data.signedPreKeys[keyId]) : null;
+            }
+
+            storePreKey(keyId, keyPair) {
+                this.data.preKeys = this.data.preKeys || {};
+                this.data.preKeys[keyId] = libsignal.KeyHelper.encodeBase64(keyPair);
+                this.save();
+            }
+
+            storeSignedPreKey(keyId, keyPair) {
+                this.data.signedPreKeys = this.data.signedPreKeys || {};
+                this.data.signedPreKeys[keyId] = libsignal.KeyHelper.encodeBase64(keyPair);
+                this.save();
+            }
+
+            removePreKey(keyId) {
+                if (this.data.preKeys) {
+                    delete this.data.preKeys[keyId];
+                    this.save();
                 }
+            }
+
+            removeSignedPreKey(keyId) {
+                if (this.data.signedPreKeys) {
+                    delete this.data.signedPreKeys[keyId];
+                    this.save();
+                }
+            }
+
+            async loadSession(recipientId) {
+                const response = await fetch(`/signal/get_session?username=${this.username}&recipient=${recipientId}`);
+                const data = await response.json();
+                return data.session;
+            }
+
+            async storeSession(recipientId, record) {
+                await fetch('/signal/save_session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: this.username,
+                        recipient: recipientId,
+                        session_record: libsignal.KeyHelper.encodeBase64(record)
+                    })
+                });
+            }
+
+            isTrustedIdentity(recipientId, identityKey) {
+                return Promise.resolve(true);
+            }
+
+            saveIdentity(recipientId, identityKey) {
+                return Promise.resolve(false);
+            }
+        }
+
+        async function initSignalProtocol() {
+            signalStore = new SignalKeyStore(currentUser);
+            
+            // Check if we already have keys
+            if (!signalStore.getIdentityKeyPair()) {
+                console.log('🔑 Generating new Signal Protocol keys...');
+                
+                // Generate identity key pair
+                const identityKeyPair = await libsignal.KeyHelper.generateIdentityKeyPair();
+                const registrationId = libsignal.KeyHelper.generateRegistrationId();
+                
+                // Generate prekeys
+                const preKeys = await libsignal.KeyHelper.generatePreKeys(1, 100);
+                const signedPreKey = await libsignal.KeyHelper.generateSignedPreKey(identityKeyPair, 1);
+                
+                // Store locally
+                signalStore.data.identityKey = libsignal.KeyHelper.encodeBase64(identityKeyPair);
+                signalStore.data.registrationId = registrationId;
+                
+                preKeys.forEach(pk => {
+                    signalStore.storePreKey(pk.keyId, pk.keyPair);
+                });
+                
+                signalStore.storeSignedPreKey(signedPreKey.keyId, signedPreKey.keyPair);
+                signalStore.save();
+                
+                // Register with server
+                await registerKeysWithServer(identityKeyPair, registrationId, preKeys, signedPreKey);
+                
+                console.log('✅ Signal Protocol initialized');
             } else {
-                myKeyPair = nacl.box.keyPair();
-                myPublicKeyBase64 = uint8ToBase64(myKeyPair.publicKey);
-                localStorage.setItem(storageKey, JSON.stringify({
-                    publicKey: myPublicKeyBase64,
-                    secretKey: uint8ToBase64(myKeyPair.secretKey)
-                }));
-                console.log('🔑 Новые ключи сгенерированы');
+                console.log('✅ Signal Protocol keys loaded from storage');
             }
             
-            // ВАЖНО: свой публичный ключ в словаре!
-            userPublicKeys[currentUser] = myPublicKeyBase64;
-            console.log('Публичный ключ:', myPublicKeyBase64);
+            signalInitialized = true;
         }
 
-        function getSharedKey(otherPublicKeyBase64) {
-            if (sharedKeysCache[otherPublicKeyBase64]) return sharedKeysCache[otherPublicKeyBase64];
-            const otherPublicKey = base64ToUint8(otherPublicKeyBase64);
-            const sharedKey = nacl.box.before(otherPublicKey, myKeyPair.secretKey);
-            sharedKeysCache[otherPublicKeyBase64] = sharedKey;
-            return sharedKey;
+        async function registerKeysWithServer(identityKeyPair, registrationId, preKeys, signedPreKey) {
+            // Register identity key
+            await fetch('/signal/register_identity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: currentUser,
+                    identity_key: libsignal.KeyHelper.encodeBase64(identityKeyPair.pubKey),
+                    registration_id: registrationId
+                })
+            });
+
+            // Register signed prekey
+            await fetch('/signal/register_signed_prekey', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: currentUser,
+                    key_id: signedPreKey.keyId,
+                    public_key: libsignal.KeyHelper.encodeBase64(signedPreKey.keyPair.pubKey),
+                    signature: libsignal.KeyHelper.encodeBase64(signedPreKey.signature)
+                })
+            });
+
+            // Register one-time prekeys
+            const preKeysData = preKeys.map(pk => ({
+                key_id: pk.keyId,
+                public_key: libsignal.KeyHelper.encodeBase64(pk.keyPair.pubKey)
+            }));
+
+            await fetch('/signal/register_one_time_prekeys', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: currentUser,
+                    pre_keys: preKeysData
+                })
+            });
         }
 
-        function encryptMessage(text, recipientPublicKeyBase64) {
-            try {
-                const sharedKey = getSharedKey(recipientPublicKeyBase64);
-                const messageBytes = new TextEncoder().encode(text);
-                const nonce = nacl.randomBytes(24);
-                const encrypted = nacl.box.after(messageBytes, nonce, sharedKey);
-                if (!encrypted) throw new Error('Шифрование вернуло null');
-                return { encrypted: uint8ToBase64(encrypted), nonce: uint8ToBase64(nonce) };
-            } catch(err) {
-                console.error('❌ Ошибка шифрования:', err);
-                return null;
+        async function encryptMessageFor(recipient, message) {
+            if (!signalInitialized) {
+                throw new Error('Signal Protocol not initialized');
             }
+
+            const address = new libsignal.SignalProtocolAddress(recipient, 1);
+            const sessionBuilder = new libsignal.SessionBuilder(signalStore, address);
+            const sessionCipher = new libsignal.SessionCipher(signalStore, address);
+
+            // Fetch prekey bundle from server
+            const response = await fetch(`/signal/get_prekey_bundle?username=${recipient}`);
+            const bundle = await response.json();
+
+            if (!bundle.identity_key) {
+                throw new Error('User not found or no keys registered');
+            }
+
+            // Build session
+            const preKeyBundle = {
+                registrationId: bundle.registration_id,
+                identityKey: libsignal.KeyHelper.decodeBase64(bundle.identity_key).buffer,
+                signedPreKeyPub: libsignal.KeyHelper.decodeBase64(bundle.signed_pre_key).buffer,
+                signedPreKeySig: libsignal.KeyHelper.decodeBase64(bundle.signature).buffer,
+                preKeyPub: bundle.pre_key ? libsignal.KeyHelper.decodeBase64(bundle.pre_key).buffer : null,
+                preKeyId: bundle.pre_key_id
+            };
+
+            await sessionBuilder.processPreKeyBundle(preKeyBundle);
+
+            // Encrypt message
+            const plaintext = new TextEncoder().encode(message);
+            const ciphertext = await sessionCipher.encrypt(plaintext);
+
+            return {
+                type: ciphertext.type,
+                body: libsignal.KeyHelper.encodeBase64(ciphertext.body),
+                registrationId: ciphertext.registrationId
+            };
         }
 
-        function decryptMessage(encryptedBase64, nonceBase64, senderPublicKeyBase64) {
-            try {
-                if (!senderPublicKeyBase64) return '[Ключ не получен]';
-                const sharedKey = getSharedKey(senderPublicKeyBase64);
-                const encrypted = base64ToUint8(encryptedBase64);
-                const nonce = base64ToUint8(nonceBase64);
-                const decrypted = nacl.box.open.after(encrypted, nonce, sharedKey);
-                if (!decrypted) {
-                    console.warn('⚠️ Расшифровка не удалась');
-                    return '[Старое сообщение]';
-                }
-                return new TextDecoder().decode(decrypted);
-            } catch (err) {
-                console.warn('⚠️ Ошибка расшифровки:', err.message);
-                return '[Старое сообщение]';
+        async function decryptMessageFrom(sender, ciphertext) {
+            if (!signalInitialized) {
+                throw new Error('Signal Protocol not initialized');
             }
+
+            const address = new libsignal.SignalProtocolAddress(sender, 1);
+            const sessionCipher = new libsignal.SessionCipher(signalStore, address);
+
+            const ciphertextBuffer = libsignal.KeyHelper.decodeBase64(ciphertext.body).buffer;
+
+            let plaintext;
+            if (ciphertext.type === 3) { // PreKeyWhisperMessage
+                plaintext = await sessionCipher.decryptPreKeyWhisperMessage(ciphertextBuffer, 'binary');
+            } else { // WhisperMessage
+                plaintext = await sessionCipher.decryptWhisperMessage(ciphertextBuffer, 'binary');
+            }
+
+            return new TextDecoder().decode(plaintext);
         }
 
         // ==================== AUTH & WS ====================
@@ -341,32 +471,39 @@
             document.getElementById('authError').textContent = '';
         }
 
-        function submitAuth(e) {
+        async function submitAuth(e) {
             e.preventDefault();
             var username = document.getElementById('usernameInput').value.trim();
             var password = document.getElementById('passwordInput').value;
             var errorDiv = document.getElementById('authError');
             errorDiv.textContent = '';
             if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
-            fetch(isRegisterMode ? '/register' : '/login', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            }).then(r => r.json()).then(data => {
+            
+            try {
+                const response = await fetch(isRegisterMode ? '/register' : '/login', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                
                 if (data.success) {
                     currentUser = username;
                     localStorage.setItem('messenger_username', username);
-                    loadOrGenerateKeyPair();
+                    
+                    // Initialize Signal Protocol
+                    await initSignalProtocol();
+                    
                     document.getElementById('authScreen').classList.add('hidden');
                     document.getElementById('app').classList.add('active');
                     connectWebSocket();
                 } else { errorDiv.textContent = data.message || 'Ошибка'; }
-            }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
+            } catch (err) { errorDiv.textContent = 'Ошибка соединения'; }
         }
 
         function logout() { 
             if (peer) peer.destroy();
             localStorage.removeItem('messenger_username');
-            localStorage.removeItem('e2e_keypair_' + currentUser);
+            localStorage.removeItem(`signal_keys_${currentUser}`);
             location.reload(); 
         }
 
@@ -374,10 +511,11 @@
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             socket = new WebSocket(ws);
             socket.onopen = function() {
-                socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: myPublicKeyBase64 }));
+                socket.send(JSON.stringify({ type: "register", username: currentUser }));
+                loadGeneralHistory();
                 initPeer();
             };
-            socket.onmessage = function(event) {
+            socket.onmessage = async function(event) {
                 var data = JSON.parse(event.data);
                 if (data.type === "typing") {
                     document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
@@ -386,13 +524,7 @@
                     return;
                 }
                 if (data.type === "user_list") {
-                    if (data.users && Array.isArray(data.users)) {
-                        data.users.forEach(u => { 
-                            if (u.username && u.public_key) userPublicKeys[u.username] = u.public_key;
-                        });
-                        userPublicKeys[currentUser] = myPublicKeyBase64;
-                        updateUserList(data.users.map(u => u.username));
-                    }
+                    updateUserList(data.users);
                     return;
                 }
                 if (data.type === "message" && currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
@@ -400,11 +532,21 @@
                     var partner = data.username === currentUser ? data.receiver : data.username;
                     if (currentChat === partner) {
                         let text = data.text;
-                        if (data.encrypted && data.nonce) {
-                            const senderKey = userPublicKeys[data.username];
-                            if (senderKey) text = decryptMessage(data.encrypted, data.nonce, senderKey);
+                        let isEncrypted = false;
+                        
+                        // Decrypt if encrypted
+                        if (data.encrypted_message) {
+                            try {
+                                const ciphertext = JSON.parse(data.encrypted_message);
+                                text = await decryptMessageFrom(data.username, ciphertext);
+                                isEncrypted = true;
+                            } catch (err) {
+                                console.error('Decryption failed:', err);
+                                text = '[Ошибка расшифровки]';
+                            }
                         }
-                        addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
+                        
+                        addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, isEncrypted);
                     }
                 } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
@@ -412,7 +554,6 @@
         }
 
         function initPeer() {
-            // Уникальный ID с суффиксом, чтобы избежать "ID taken"
             const peerId = 'msg_' + currentUser + '_' + Math.random().toString(36).substr(2, 9);
             peer = new Peer(peerId, { debug: 2 });
             peer.on('open', id => console.log('PeerJS ID:', id));
@@ -423,22 +564,14 @@
                 document.getElementById('incomingCallAvatar').textContent = currentCallTarget.charAt(0).toUpperCase();
                 document.getElementById('incomingCallModal').classList.add('active');
             });
-            peer.on('error', err => {
-                if (err.type === 'unavailable-id') {
-                    console.log('ID занят, создаём новый...');
-                    peer.destroy();
-                    setTimeout(initPeer, 1000);
-                } else {
-                    console.error('PeerJS error:', err);
-                }
-            });
+            peer.on('error', err => console.error('PeerJS error:', err));
         }
 
-        window.onload = function() {
+        window.onload = async function() {
             var saved = localStorage.getItem('messenger_username');
             if (saved) { 
                 currentUser = saved; 
-                loadOrGenerateKeyPair();
+                await initSignalProtocol();
                 document.getElementById('authScreen').classList.add('hidden'); 
                 document.getElementById('app').classList.add('active'); 
                 connectWebSocket(); 
@@ -487,20 +620,27 @@
             }); 
         }
         
-        function loadPrivateHistory(p) { 
-            fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()).then(data => { 
-                if (data) { 
-                    for (const m of data) { 
-                        let text = m.text; 
-                        if (m.encrypted && m.nonce) { 
-                            const senderKey = userPublicKeys[m.sender]; 
-                            if (senderKey) text = decryptMessage(m.encrypted, m.nonce, senderKey); 
-                            else text = '[Ожидание ключей]';
-                        } 
-                        addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true); 
-                    } 
+        async function loadPrivateHistory(p) { 
+            const data = await fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json());
+            if (data) { 
+                for (const m of data) { 
+                    let text = m.text; 
+                    let isEncrypted = false;
+                    
+                    if (m.encrypted_message) {
+                        try {
+                            const ciphertext = JSON.parse(m.encrypted_message);
+                            text = await decryptMessageFrom(m.sender, ciphertext);
+                            isEncrypted = true;
+                        } catch (err) {
+                            console.error('Decryption failed:', err);
+                            text = '[Ошибка расшифровки]';
+                        }
+                    }
+                    
+                    addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, isEncrypted); 
                 } 
-            }); 
+            } 
         }
         
         function loadGroupHistory(id) { 
@@ -514,8 +654,7 @@
             var others = users.filter(u => u !== currentUser);
             others.forEach(function(u) {
                 var div = document.createElement('div'); div.className = 'chat-item';
-                const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
-                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
+                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span><span class="e2e-badge">🔒</span></div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
                 div.onclick = function() { switchToPrivate(u); }; list.appendChild(div);
             });
         }
@@ -538,23 +677,27 @@
             if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var reader = new FileReader();
-            reader.onload = function(e) {
+            reader.onload = async function(e) {
                 var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
                 if (currentChat==='general') msg.type='message';
                 else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
                 else { 
                     msg.type='private'; msg.receiver=currentChat; 
-                    const recipientKey = userPublicKeys[currentChat]; 
-                    if (recipientKey) { 
-                        const enc = encryptMessage(e.target.result, recipientKey); 
-                        if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; } 
-                    } 
+                    try {
+                        const encrypted = await encryptMessageFor(currentChat, e.target.result);
+                        msg.encrypted_message = JSON.stringify(encrypted);
+                        msg.text = '[Зашифровано]';
+                    } catch (err) {
+                        console.error('Encryption failed:', err);
+                        alert('Не удалось зашифровать файл');
+                        return;
+                    }
                 }
                 socket.send(JSON.stringify(msg));
             }; reader.readAsDataURL(file); event.target.value = '';
         }
 
-        function sendMessage() {
+        async function sendMessage() {
             var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var msg = { text: input.value };
@@ -562,11 +705,15 @@
             else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
             else { 
                 msg.type='private'; msg.receiver=currentChat; 
-                const recipientKey = userPublicKeys[currentChat]; 
-                if (recipientKey) { 
-                    const enc = encryptMessage(input.value, recipientKey); 
-                    if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; msg.text = '[Зашифровано]'; } 
-                } 
+                try {
+                    const encrypted = await encryptMessageFor(currentChat, input.value);
+                    msg.encrypted_message = JSON.stringify(encrypted);
+                    msg.text = '[Зашифровано]';
+                } catch (err) {
+                    console.error('Encryption failed:', err);
+                    alert('Не удалось зашифровать сообщение');
+                    return;
+                }
             }
             socket.send(JSON.stringify(msg)); input.value = '';
         }
@@ -586,7 +733,6 @@
                 localStream = await getMedia(currentFacingMode);
                 document.getElementById('localVideo').srcObject = localStream;
                 document.getElementById('callScreen').classList.add('active');
-                // Находим ID собеседника среди его возможных ID
                 const targetPeerId = 'msg_' + target;
                 currentCall = peer.call(targetPeerId, localStream, { metadata: { username: currentUser } });
                 if (!currentCall) { alert('Не удалось дозвониться'); endCall(); return; }
