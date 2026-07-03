@@ -38,7 +38,6 @@ type Message struct {
 	Receiver  string   `json:"receiver,omitempty"`
 	GroupID   int      `json:"group_id,omitempty"`
 	GroupName string   `json:"group_name,omitempty"`
-	MessageID int      `json:"message_id,omitempty"`
 }
 
 type AuthRequest struct {
