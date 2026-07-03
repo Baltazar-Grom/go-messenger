@@ -187,7 +187,7 @@
         var statusDiv = document.getElementById('typing_status'), statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false;
-        let peer = null; // PeerJS peer
+        let peer = null;
 
         function toggleAuthMode() {
             isRegisterMode = !isRegisterMode;
@@ -213,7 +213,6 @@
                     document.getElementById('login_screen').classList.add('hidden');
                     document.getElementById('app_container').classList.remove('hidden');
                     connectWebSocket();
-                    initPeer(); // Инициализируем PeerJS
                 } else { errorDiv.textContent = data.message || 'Ошибка'; }
             }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
         }
@@ -224,46 +223,14 @@
             location.reload(); 
         }
 
-        // Инициализация PeerJS
-        function initPeer() {
-            // Создаём уникальный ID для пользователя
-            var peerId = 'messenger_' + currentUser + '_' + Date.now();
-            
-            peer = new Peer(peerId, {
-                debug: 2
-            });
-
-            peer.on('open', function(id) {
-                console.log('PeerJS ID:', id);
-                // Отправляем ID на сервер, чтобы другие могли найти нас
-                socket.send(JSON.stringify({ type: 'peer_id', peer_id: id }));
-            });
-
-            peer.on('call', function(call) {
-                // Входящий звонок
-                currentCall = call;
-                currentCallTarget = call.metadata.username;
-                document.getElementById('incoming_call_text').textContent = currentCallTarget + ' звонит вам...';
-                document.getElementById('incoming_call_modal').classList.remove('hidden');
-                
-                // Сохраняем звонок для принятия
-                window.pendingCall = call;
-            });
-
-            peer.on('error', function(err) {
-                console.error('PeerJS error:', err);
-                if (err.type === 'unavailable-id') {
-                    console.log('ID недоступен, создаём новый');
-                }
-            });
-        }
-
         function connectWebSocket() {
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             socket = new WebSocket(ws);
             socket.onopen = function() {
                 socket.send(JSON.stringify({ type: "register", username: currentUser }));
                 loadGeneralHistory(); loadGroups(); loadAvailableGroups();
+                // Инициализируем PeerJS ПОСЛЕ подключения WebSocket
+                initPeer();
             };
             socket.onmessage = function(event) {
                 var data = JSON.parse(event.data);
@@ -271,12 +238,6 @@
                     statusDiv.textContent = data.username + ' печатает...';
                     clearTimeout(statusTimer);
                     statusTimer = setTimeout(function() { statusDiv.textContent = ''; }, 2000);
-                    return;
-                }
-                if (data.type === "peer_id") {
-                    // Сохраняем PeerJS ID пользователя
-                    if (!window.peerIds) window.peerIds = {};
-                    window.peerIds[data.username] = data.peer_id;
                     return;
                 }
                 if (data.type === "message" && currentChat === 'general')
@@ -291,9 +252,39 @@
             };
         }
 
+        // Инициализация PeerJS с фиксированным ID = username
+        function initPeer() {
+            // Используем username как ID (фиксированный, не нужно передавать через сервер)
+            var peerId = 'msg_' + currentUser;
+            
+            peer = new Peer(peerId, {
+                debug: 2
+            });
+
+            peer.on('open', function(id) {
+                console.log('PeerJS подключён с ID:', id);
+            });
+
+            peer.on('call', function(call) {
+                // Входящий звонок
+                currentCall = call;
+                currentCallTarget = call.metadata.username || 'Неизвестный';
+                document.getElementById('incoming_call_text').textContent = currentCallTarget + ' звонит вам...';
+                document.getElementById('incoming_call_modal').classList.remove('hidden');
+                window.pendingCall = call;
+            });
+
+            peer.on('error', function(err) {
+                console.error('PeerJS error:', err.type, err.message);
+                if (err.type === 'unavailable-id') {
+                    console.log('ID занят, возможно старая сессия. Переподключение...');
+                }
+            });
+        }
+
         window.onload = function() {
             var saved = localStorage.getItem('messenger_username');
-            if (saved) { currentUser = saved; document.getElementById('login_screen').classList.add('hidden'); document.getElementById('app_container').classList.remove('hidden'); connectWebSocket(); initPeer(); }
+            if (saved) { currentUser = saved; document.getElementById('login_screen').classList.add('hidden'); document.getElementById('app_container').classList.remove('hidden'); connectWebSocket(); }
         };
 
         function switchToGeneral() { currentChat = 'general'; currentGroupID = 0; document.getElementById('chat_header').textContent = 'Общий чат'; document.querySelectorAll('.user-item,.group-item').forEach(e => e.classList.remove('active')); document.getElementById('user_item_general').classList.add('active'); messagesDiv.innerHTML = ''; loadGeneralHistory(); }
@@ -317,7 +308,7 @@
             document.getElementById('online_count').textContent = others.length;
             others.forEach(function(u) {
                 var div = document.createElement('div'); div.className = 'user-item';
-                div.innerHTML = '<span class="status"></span>' + u + '<button class="call-btn" onclick="startCall(\''+u+'\',event)">📹</button>';
+                div.innerHTML = '<span class="status"></span>' + u + '<button class="call-btn" onclick="startCall(\''+u+'\',event)"></button>';
                 div.onclick = function() { switchToPrivate(u); }; l.appendChild(div);
             });
         }
@@ -386,18 +377,17 @@
                 document.getElementById('local_video').srcObject = localStream;
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
-                // Получаем PeerJS ID собеседника
-                var targetPeerId = window.peerIds[target];
-                if (!targetPeerId) {
-                    alert('Пользователь ' + target + ' не доступен для звонка');
-                    endCall();
-                    return;
-                }
-
-                // Звоним через PeerJS
+                // Звоним через PeerJS (ID = username собеседника)
+                var targetPeerId = 'msg_' + target;
                 currentCall = peer.call(targetPeerId, localStream, {
                     metadata: { username: currentUser }
                 });
+
+                if (!currentCall) {
+                    alert('Не удалось дозвониться до ' + target);
+                    endCall();
+                    return;
+                }
 
                 currentCall.on('stream', function(remoteStream) {
                     console.log('Получен поток от собеседника');
@@ -413,7 +403,7 @@
 
                 currentCall.on('error', function(err) {
                     console.error('Ошибка звонка:', err);
-                    alert('Ошибка соединения');
+                    alert('Ошибка соединения с ' + target);
                     endCall();
                 });
 
@@ -433,7 +423,6 @@
                 document.getElementById('local_video').srcObject = localStream;
                 document.getElementById('active_call_modal').classList.remove('hidden');
 
-                // Принимаем звонок
                 currentCall = window.pendingCall;
                 currentCall.answer(localStream);
 
@@ -455,7 +444,7 @@
         }
 
         async function switchCamera() {
-            if (!localStream) return;
+            if (!localStream || !currentCall) return;
             currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             try {
                 var ns = await getMedia(currentFacingMode);
