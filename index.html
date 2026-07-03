@@ -15,7 +15,6 @@
             --message-in: #ffffff; --hover: #f0f0f0; --success: #4caf50; --danger: #e74c3c;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-secondary); height: 100vh; overflow: hidden; color: var(--text); }
-        
         .auth-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .auth-container { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); width: 90%; max-width: 400px; animation: slideUp 0.4s ease; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -30,7 +29,6 @@
         .auth-toggle { text-align: center; margin-top: 20px; color: var(--text-secondary); }
         .auth-toggle a { color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
         .auth-error { color: var(--danger); text-align: center; margin-top: 15px; font-size: 14px; min-height: 20px; }
-
         .app { display: none; height: 100vh; width: 100%; }
         .app.active { display: flex; }
         .sidebar { width: 350px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
@@ -54,7 +52,6 @@
         .call-btn-small { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .call-btn-small:hover { transform: scale(1.1); }
         .call-btn-small svg { width: 18px; height: 18px; fill: white; }
-
         .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-secondary); }
         .chat-header { padding: 15px 20px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 15px; }
         .back-btn { display: none; }
@@ -85,7 +82,6 @@
         .send-btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .send-btn:hover { background: var(--primary-dark); transform: scale(1.05); }
         .send-btn svg { width: 20px; height: 20px; fill: white; }
-
         @media (max-width: 768px) {
             .sidebar { width: 100%; }
             .chat-area { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
@@ -93,7 +89,6 @@
             .back-btn { display: flex; }
             .message { max-width: 85%; }
         }
-
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
         .modal.active { display: flex; }
         .modal-content { background: white; padding: 30px; border-radius: 15px; width: 90%; max-width: 400px; animation: slideUp 0.3s ease; }
@@ -104,7 +99,6 @@
         .modal-btn:hover { transform: translateY(-2px); }
         .modal-btn.primary { background: var(--primary); color: white; }
         .modal-btn.secondary { background: var(--bg-secondary); color: var(--text); }
-
         .call-screen { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; display: none; flex-direction: column; z-index: 3000; overflow: hidden; }
         .call-screen.active { display: flex; }
         .call-video-container { flex: 1; position: relative; width: 100%; height: 100%; overflow: hidden; }
@@ -118,7 +112,6 @@
         .call-control-btn.end { background: var(--danger); }
         .call-control-btn.mute { background: #7f8c8d; }
         .call-control-btn.switch { background: var(--primary); }
-
         .incoming-call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 4000; backdrop-filter: blur(5px); }
         .incoming-call-modal.active { display: flex; }
         .incoming-call-content { background: white; padding: 40px; border-radius: 20px; width: 90%; max-width: 380px; text-align: center; animation: slideUp 0.4s ease; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
@@ -239,416 +232,401 @@
     </div>
 
     <script>
-    var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
-    var isRegisterMode = false, statusTimer;
-    let localStream, currentCall = null, currentCallTarget = '';
-    let currentFacingMode = 'user', isMuted = false, peer = null;
-    
-    // E2E через TweetNaCl
-    let myKeyPair = null;
-    let myPublicKeyBase64 = null;
-    let userPublicKeys = {};
-    let sharedKeysCache = {}; // Кэш общих ключей для скорости
-    let loadedChats = {}; // Защита от дублирования истории
-
-    const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
-
-    // ==================== E2E CRYPTO ====================
-    
-    function uint8ToBase64(arr) {
-        let binary = '';
-        for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
-        return btoa(binary);
-    }
-    function base64ToUint8(base64) {
-        let binary = atob(base64);
-        let arr = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
-        return arr;
-    }
-
-    function loadOrGenerateKeyPair() {
-        const storageKey = 'e2e_keypair_' + currentUser;
-        const savedKeys = localStorage.getItem(storageKey);
-
-        if (savedKeys) {
-            try {
-                const parsed = JSON.parse(savedKeys);
-                myKeyPair = {
-                    publicKey: base64ToUint8(parsed.publicKey),
-                    secretKey: base64ToUint8(parsed.secretKey)
-                };
-                myPublicKeyBase64 = parsed.publicKey;
-                console.log('✅ Ключи загружены из localStorage');
-            } catch(e) {
-                console.warn('Ошибка загрузки, генерируем новые:', e);
-                localStorage.removeItem(storageKey);
-                loadOrGenerateKeyPair();
-            }
-        } else {
-            myKeyPair = nacl.box.keyPair();
-            myPublicKeyBase64 = uint8ToBase64(myKeyPair.publicKey);
-            localStorage.setItem(storageKey, JSON.stringify({
-                publicKey: myPublicKeyBase64,
-                secretKey: uint8ToBase64(myKeyPair.secretKey)
-            }));
-            console.log('🔑 Новые ключи сгенерированы и сохранены');
-        }
+        var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
+        var isRegisterMode = false, statusTimer;
+        let localStream, currentCall = null, currentCallTarget = '';
+        let currentFacingMode = 'user', isMuted = false, peer = null;
         
-        // ВАЖНО: добавляем свой публичный ключ в словарь!
-        userPublicKeys[currentUser] = myPublicKeyBase64;
-        console.log('Публичный ключ:', myPublicKeyBase64);
-    }
+        // E2E через TweetNaCl
+        let myKeyPair = null;
+        let myPublicKeyBase64 = null;
+        let userPublicKeys = {};
+        let sharedKeysCache = {};
+        let loadedChats = {};
 
-    // Получаем общий ключ для пары (с кэшированием)
-    function getSharedKey(otherPublicKeyBase64) {
-        const cacheKey = otherPublicKeyBase64;
-        if (sharedKeysCache[cacheKey]) return sharedKeysCache[cacheKey];
-        
-        const otherPublicKey = base64ToUint8(otherPublicKeyBase64);
-        const sharedKey = nacl.box.before(otherPublicKey, myKeyPair.secretKey);
-        sharedKeysCache[cacheKey] = sharedKey;
-        return sharedKey;
-    }
+        const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
-    function encryptMessage(text, recipientPublicKeyBase64) {
-        try {
-            const sharedKey = getSharedKey(recipientPublicKeyBase64);
-            const messageBytes = new TextEncoder().encode(text);
-            const nonce = nacl.randomBytes(24);
-            const encrypted = nacl.box.after(messageBytes, nonce, sharedKey);
-            if (!encrypted) throw new Error('Шифрование вернуло null');
-            return { encrypted: uint8ToBase64(encrypted), nonce: uint8ToBase64(nonce) };
-        } catch(err) {
-            console.error('❌ Ошибка шифрования:', err);
-            return null;
+        // ==================== E2E CRYPTO ====================
+        function uint8ToBase64(arr) {
+            let binary = '';
+            for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
+            return btoa(binary);
         }
-    }
+        function base64ToUint8(base64) {
+            let binary = atob(base64);
+            let arr = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+            return arr;
+        }
 
-    function decryptMessage(encryptedBase64, nonceBase64, senderPublicKeyBase64) {
-        try {
-            if (!senderPublicKeyBase64) {
-                return '[Ключ не получен]';
+        function loadOrGenerateKeyPair() {
+            const storageKey = 'e2e_keypair_' + currentUser;
+            const savedKeys = localStorage.getItem(storageKey);
+
+            if (savedKeys) {
+                try {
+                    const parsed = JSON.parse(savedKeys);
+                    myKeyPair = {
+                        publicKey: base64ToUint8(parsed.publicKey),
+                        secretKey: base64ToUint8(parsed.secretKey)
+                    };
+                    myPublicKeyBase64 = parsed.publicKey;
+                    console.log('✅ Ключи загружены из localStorage');
+                } catch(e) {
+                    console.warn('Ошибка загрузки, генерируем новые:', e);
+                    localStorage.removeItem(storageKey);
+                    loadOrGenerateKeyPair();
+                }
+            } else {
+                myKeyPair = nacl.box.keyPair();
+                myPublicKeyBase64 = uint8ToBase64(myKeyPair.publicKey);
+                localStorage.setItem(storageKey, JSON.stringify({
+                    publicKey: myPublicKeyBase64,
+                    secretKey: uint8ToBase64(myKeyPair.secretKey)
+                }));
+                console.log('🔑 Новые ключи сгенерированы');
             }
             
-            const sharedKey = getSharedKey(senderPublicKeyBase64);
-            const encrypted = base64ToUint8(encryptedBase64);
-            const nonce = base64ToUint8(nonceBase64);
+            // ВАЖНО: свой публичный ключ в словаре!
+            userPublicKeys[currentUser] = myPublicKeyBase64;
+            console.log('Публичный ключ:', myPublicKeyBase64);
+        }
 
-            const decrypted = nacl.box.open.after(encrypted, nonce, sharedKey);
-            if (!decrypted) {
-                console.warn('⚠️ Расшифровка не удалась (старое сообщение или повреждение)');
+        function getSharedKey(otherPublicKeyBase64) {
+            if (sharedKeysCache[otherPublicKeyBase64]) return sharedKeysCache[otherPublicKeyBase64];
+            const otherPublicKey = base64ToUint8(otherPublicKeyBase64);
+            const sharedKey = nacl.box.before(otherPublicKey, myKeyPair.secretKey);
+            sharedKeysCache[otherPublicKeyBase64] = sharedKey;
+            return sharedKey;
+        }
+
+        function encryptMessage(text, recipientPublicKeyBase64) {
+            try {
+                const sharedKey = getSharedKey(recipientPublicKeyBase64);
+                const messageBytes = new TextEncoder().encode(text);
+                const nonce = nacl.randomBytes(24);
+                const encrypted = nacl.box.after(messageBytes, nonce, sharedKey);
+                if (!encrypted) throw new Error('Шифрование вернуло null');
+                return { encrypted: uint8ToBase64(encrypted), nonce: uint8ToBase64(nonce) };
+            } catch(err) {
+                console.error('❌ Ошибка шифрования:', err);
+                return null;
+            }
+        }
+
+        function decryptMessage(encryptedBase64, nonceBase64, senderPublicKeyBase64) {
+            try {
+                if (!senderPublicKeyBase64) return '[Ключ не получен]';
+                const sharedKey = getSharedKey(senderPublicKeyBase64);
+                const encrypted = base64ToUint8(encryptedBase64);
+                const nonce = base64ToUint8(nonceBase64);
+                const decrypted = nacl.box.open.after(encrypted, nonce, sharedKey);
+                if (!decrypted) {
+                    console.warn('⚠️ Расшифровка не удалась');
+                    return '[Старое сообщение]';
+                }
+                return new TextDecoder().decode(decrypted);
+            } catch (err) {
+                console.warn('⚠️ Ошибка расшифровки:', err.message);
                 return '[Старое сообщение]';
             }
-            return new TextDecoder().decode(decrypted);
-        } catch (err) {
-            console.warn('⚠️ Ошибка расшифровки:', err.message);
-            return '[Старое сообщение]';
         }
-    }
 
-    // ==================== AUTH & WS ====================
-    function toggleAuthMode() {
-        isRegisterMode = !isRegisterMode;
-        document.getElementById('authBtnText').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
-        document.getElementById('authToggleText').textContent = isRegisterMode ? 'Уже есть аккаунт?' : 'Нет аккаунта?';
-        document.getElementById('authToggleLink').textContent = isRegisterMode ? 'Войти' : 'Зарегистрироваться';
-        document.getElementById('authError').textContent = '';
-    }
+        // ==================== AUTH & WS ====================
+        function toggleAuthMode() {
+            isRegisterMode = !isRegisterMode;
+            document.getElementById('authBtnText').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
+            document.getElementById('authToggleText').textContent = isRegisterMode ? 'Уже есть аккаунт?' : 'Нет аккаунта?';
+            document.getElementById('authToggleLink').textContent = isRegisterMode ? 'Войти' : 'Зарегистрироваться';
+            document.getElementById('authError').textContent = '';
+        }
 
-    function submitAuth(e) {
-        e.preventDefault();
-        var username = document.getElementById('usernameInput').value.trim();
-        var password = document.getElementById('passwordInput').value;
-        var errorDiv = document.getElementById('authError');
-        errorDiv.textContent = '';
-        if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
-        fetch(isRegisterMode ? '/register' : '/login', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        }).then(r => r.json()).then(data => {
-            if (data.success) {
-                currentUser = username;
-                localStorage.setItem('messenger_username', username);
-                loadOrGenerateKeyPair();
-                document.getElementById('authScreen').classList.add('hidden');
-                document.getElementById('app').classList.add('active');
-                connectWebSocket();
-            } else { errorDiv.textContent = data.message || 'Ошибка'; }
-        }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
-    }
+        function submitAuth(e) {
+            e.preventDefault();
+            var username = document.getElementById('usernameInput').value.trim();
+            var password = document.getElementById('passwordInput').value;
+            var errorDiv = document.getElementById('authError');
+            errorDiv.textContent = '';
+            if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
+            fetch(isRegisterMode ? '/register' : '/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            }).then(r => r.json()).then(data => {
+                if (data.success) {
+                    currentUser = username;
+                    localStorage.setItem('messenger_username', username);
+                    loadOrGenerateKeyPair();
+                    document.getElementById('authScreen').classList.add('hidden');
+                    document.getElementById('app').classList.add('active');
+                    connectWebSocket();
+                } else { errorDiv.textContent = data.message || 'Ошибка'; }
+            }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
+        }
 
-    function logout() { 
-        if (peer) peer.destroy();
-        localStorage.removeItem('messenger_username');
-        localStorage.removeItem('e2e_keypair_' + currentUser);
-        location.reload(); 
-    }
+        function logout() { 
+            if (peer) peer.destroy();
+            localStorage.removeItem('messenger_username');
+            localStorage.removeItem('e2e_keypair_' + currentUser);
+            location.reload(); 
+        }
 
-    function connectWebSocket() {
-        var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
-        socket = new WebSocket(ws);
-        socket.onopen = function() {
-            socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: myPublicKeyBase64 }));
-            initPeer();
-        };
-        socket.onmessage = function(event) {
-            var data = JSON.parse(event.data);
-            if (data.type === "typing") {
-                document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
-                clearTimeout(statusTimer);
-                statusTimer = setTimeout(function() { document.getElementById('typingIndicator').textContent = ''; }, 2000);
-                return;
-            }
-            if (data.type === "user_list") {
-                if (data.users && Array.isArray(data.users)) {
-                    data.users.forEach(u => { 
-                        if (u.username && u.public_key) {
-                            userPublicKeys[u.username] = u.public_key;
-                        }
-                    });
-                    // Снова убеждаемся, что свой ключ в словаре
-                    userPublicKeys[currentUser] = myPublicKeyBase64;
-                    updateUserList(data.users.map(u => u.username));
+        function connectWebSocket() {
+            var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+            socket = new WebSocket(ws);
+            socket.onopen = function() {
+                socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: myPublicKeyBase64 }));
+                initPeer();
+            };
+            socket.onmessage = function(event) {
+                var data = JSON.parse(event.data);
+                if (data.type === "typing") {
+                    document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
+                    clearTimeout(statusTimer);
+                    statusTimer = setTimeout(function() { document.getElementById('typingIndicator').textContent = ''; }, 2000);
+                    return;
                 }
-                return;
-            }
-            if (data.type === "message" && currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
-            else if (data.type === "private") {
-                var partner = data.username === currentUser ? data.receiver : data.username;
-                if (currentChat === partner) {
-                    let text = data.text;
-                    if (data.encrypted && data.nonce) {
-                        const senderKey = userPublicKeys[data.username];
-                        if (senderKey) text = decryptMessage(data.encrypted, data.nonce, senderKey);
+                if (data.type === "user_list") {
+                    if (data.users && Array.isArray(data.users)) {
+                        data.users.forEach(u => { 
+                            if (u.username && u.public_key) userPublicKeys[u.username] = u.public_key;
+                        });
+                        userPublicKeys[currentUser] = myPublicKeyBase64;
+                        updateUserList(data.users.map(u => u.username));
                     }
-                    addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
+                    return;
                 }
-            } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
-            else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
-        };
-    }
-
-    function initPeer() {
-        peer = new Peer('msg_' + currentUser, { debug: 2 });
-        peer.on('open', id => console.log('PeerJS ID:', id));
-        peer.on('call', call => {
-            currentCall = call;
-            currentCallTarget = call.metadata.username || 'Неизвестный';
-            document.getElementById('incomingCallName').textContent = currentCallTarget;
-            document.getElementById('incomingCallAvatar').textContent = currentCallTarget.charAt(0).toUpperCase();
-            document.getElementById('incomingCallModal').classList.add('active');
-        });
-        peer.on('error', err => console.error('PeerJS error:', err));
-    }
-
-    window.onload = function() {
-        var saved = localStorage.getItem('messenger_username');
-        if (saved) { 
-            currentUser = saved; 
-            loadOrGenerateKeyPair();
-            document.getElementById('authScreen').classList.add('hidden'); 
-            document.getElementById('app').classList.add('active'); 
-            connectWebSocket(); 
-        }
-    };
-
-    // ==================== UI & CHATS ====================
-    function switchToGeneral() { 
-        currentChat = 'general'; currentGroupID = 0; 
-        document.getElementById('chatHeaderName').textContent = 'Общий чат'; 
-        document.getElementById('chatHeaderStatus').textContent = 'Все участники'; 
-        document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
-        document.getElementById('generalChat').classList.add('active'); 
-        document.getElementById('chatMessages').innerHTML = ''; 
-        loadGeneralHistory(); 
-        if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
-    }
-    
-    function switchToPrivate(u) { 
-        currentChat = u; currentGroupID = 0; 
-        document.getElementById('chatHeaderName').textContent = u; 
-        document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E'; 
-        document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
-        event.currentTarget.classList.add('active'); 
-        document.getElementById('chatMessages').innerHTML = ''; 
-        
-        // Защита от дублирования: грузим историю только если её ещё не грузили для этого чата
-        const chatKey = 'private_' + u;
-        if (!loadedChats[chatKey]) {
-            loadPrivateHistory(u);
-            loadedChats[chatKey] = true;
-        }
-        
-        if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
-    }
-    
-    function switchToGroup(id, name) { 
-        currentChat = 'group'; currentGroupID = id; 
-        document.getElementById('chatHeaderName').textContent = name; 
-        document.getElementById('chatHeaderStatus').textContent = 'Групповой чат'; 
-        document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
-        event.currentTarget.classList.add('active'); 
-        document.getElementById('chatMessages').innerHTML = ''; 
-        
-        const chatKey = 'group_' + id;
-        if (!loadedChats[chatKey]) {
-            loadGroupHistory(id);
-            loadedChats[chatKey] = true;
-        }
-        
-        if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
-    }
-    
-    function backToList() { document.getElementById('chatArea').classList.remove('active'); }
-
-    function loadGeneralHistory() { 
-        fetch('/history').then(r=>r.json()).then(d => { 
-            if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); 
-        }); 
-    }
-    
-    function loadPrivateHistory(p) { 
-        fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()).then(data => { 
-            if (data) { 
-                for (const m of data) { 
-                    let text = m.text; 
-                    if (m.encrypted && m.nonce) { 
-                        const senderKey = userPublicKeys[m.sender]; 
-                        if (senderKey) {
-                            text = decryptMessage(m.encrypted, m.nonce, senderKey);
-                        } else {
-                            text = '[Ожидание ключей]';
+                if (data.type === "message" && currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
+                else if (data.type === "private") {
+                    var partner = data.username === currentUser ? data.receiver : data.username;
+                    if (currentChat === partner) {
+                        let text = data.text;
+                        if (data.encrypted && data.nonce) {
+                            const senderKey = userPublicKeys[data.username];
+                            if (senderKey) text = decryptMessage(data.encrypted, data.nonce, senderKey);
                         }
+                        addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
+                    }
+                } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
+                else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
+            };
+        }
+
+        function initPeer() {
+            // Уникальный ID с суффиксом, чтобы избежать "ID taken"
+            const peerId = 'msg_' + currentUser + '_' + Math.random().toString(36).substr(2, 9);
+            peer = new Peer(peerId, { debug: 2 });
+            peer.on('open', id => console.log('PeerJS ID:', id));
+            peer.on('call', call => {
+                currentCall = call;
+                currentCallTarget = call.metadata.username || 'Неизвестный';
+                document.getElementById('incomingCallName').textContent = currentCallTarget;
+                document.getElementById('incomingCallAvatar').textContent = currentCallTarget.charAt(0).toUpperCase();
+                document.getElementById('incomingCallModal').classList.add('active');
+            });
+            peer.on('error', err => {
+                if (err.type === 'unavailable-id') {
+                    console.log('ID занят, создаём новый...');
+                    peer.destroy();
+                    setTimeout(initPeer, 1000);
+                } else {
+                    console.error('PeerJS error:', err);
+                }
+            });
+        }
+
+        window.onload = function() {
+            var saved = localStorage.getItem('messenger_username');
+            if (saved) { 
+                currentUser = saved; 
+                loadOrGenerateKeyPair();
+                document.getElementById('authScreen').classList.add('hidden'); 
+                document.getElementById('app').classList.add('active'); 
+                connectWebSocket(); 
+            }
+        };
+
+        // ==================== UI & CHATS ====================
+        function switchToGeneral() { 
+            currentChat = 'general'; currentGroupID = 0; 
+            document.getElementById('chatHeaderName').textContent = 'Общий чат'; 
+            document.getElementById('chatHeaderStatus').textContent = 'Все участники'; 
+            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
+            document.getElementById('generalChat').classList.add('active'); 
+            document.getElementById('chatMessages').innerHTML = ''; 
+            loadGeneralHistory(); 
+            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
+        }
+        
+        function switchToPrivate(u) { 
+            currentChat = u; currentGroupID = 0; 
+            document.getElementById('chatHeaderName').textContent = u; 
+            document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E'; 
+            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
+            event.currentTarget.classList.add('active'); 
+            document.getElementById('chatMessages').innerHTML = ''; 
+            loadPrivateHistory(u);
+            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
+        }
+        
+        function switchToGroup(id, name) { 
+            currentChat = 'group'; currentGroupID = id; 
+            document.getElementById('chatHeaderName').textContent = name; 
+            document.getElementById('chatHeaderStatus').textContent = 'Групповой чат'; 
+            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
+            event.currentTarget.classList.add('active'); 
+            document.getElementById('chatMessages').innerHTML = ''; 
+            loadGroupHistory(id);
+            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
+        }
+        
+        function backToList() { document.getElementById('chatArea').classList.remove('active'); }
+
+        function loadGeneralHistory() { 
+            fetch('/history').then(r=>r.json()).then(d => { 
+                if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); 
+            }); 
+        }
+        
+        function loadPrivateHistory(p) { 
+            fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()).then(data => { 
+                if (data) { 
+                    for (const m of data) { 
+                        let text = m.text; 
+                        if (m.encrypted && m.nonce) { 
+                            const senderKey = userPublicKeys[m.sender]; 
+                            if (senderKey) text = decryptMessage(m.encrypted, m.nonce, senderKey); 
+                            else text = '[Ожидание ключей]';
+                        } 
+                        addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true); 
                     } 
-                    addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true); 
                 } 
-            } 
-        }); 
-    }
-    
-    function loadGroupHistory(id) { 
-        fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { 
-            if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); 
-        }); 
-    }
+            }); 
+        }
+        
+        function loadGroupHistory(id) { 
+            fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { 
+                if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); 
+            }); 
+        }
 
-    function updateUserList(users) {
-        var list = document.getElementById('userList'); list.innerHTML = '';
-        var others = users.filter(u => u !== currentUser);
-        others.forEach(function(u) {
-            var div = document.createElement('div'); div.className = 'chat-item';
-            const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
-            div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
-            div.onclick = function() { switchToPrivate(u); }; list.appendChild(div);
-        });
-    }
+        function updateUserList(users) {
+            var list = document.getElementById('userList'); list.innerHTML = '';
+            var others = users.filter(u => u !== currentUser);
+            others.forEach(function(u) {
+                var div = document.createElement('div'); div.className = 'chat-item';
+                const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
+                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
+                div.onclick = function() { switchToPrivate(u); }; list.appendChild(div);
+            });
+        }
 
-    function addMessageToUI(username, text, image, fileName, isOwn, isEncrypted = false) {
-        var div = document.createElement('div'); div.className = 'message ' + (isOwn ? 'out' : 'in') + (isEncrypted ? ' encrypted' : '');
-        var content = '<div class="message-meta">' + username + (isEncrypted ? ' 🔒' : '') + '</div>';
-        if (fileName) content += '<div class="message-file"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><div class="message-file-info"><div class="message-file-name">' + fileName + '</div><a href="' + image + '" download="' + fileName + '" class="message-file-download">Скачать</a></div></div>';
-        else if (image) content += '<img src="' + image + '" class="message-image" onclick="window.open(this.src)">';
-        if (text) content += '<div class="message-text">' + text + '</div>';
-        div.innerHTML = content; document.getElementById('chatMessages').appendChild(div); document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-    }
-    
-    function addSystemMessage(text) { var div = document.createElement('div'); div.className = 'message system'; div.innerHTML = text; document.getElementById('chatMessages').appendChild(div); document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight; }
-    
-    function handleTyping() { if (socket && socket.readyState === 1) socket.send(JSON.stringify({type:'typing',username:currentUser})); }
+        function addMessageToUI(username, text, image, fileName, isOwn, isEncrypted = false) {
+            var div = document.createElement('div'); div.className = 'message ' + (isOwn ? 'out' : 'in') + (isEncrypted ? ' encrypted' : '');
+            var content = '<div class="message-meta">' + username + (isEncrypted ? ' 🔒' : '') + '</div>';
+            if (fileName) content += '<div class="message-file"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><div class="message-file-info"><div class="message-file-name">' + fileName + '</div><a href="' + image + '" download="' + fileName + '" class="message-file-download">Скачать</a></div></div>';
+            else if (image) content += '<img src="' + image + '" class="message-image" onclick="window.open(this.src)">';
+            if (text) content += '<div class="message-text">' + text + '</div>';
+            div.innerHTML = content; document.getElementById('chatMessages').appendChild(div); document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+        }
+        
+        function addSystemMessage(text) { var div = document.createElement('div'); div.className = 'message system'; div.innerHTML = text; document.getElementById('chatMessages').appendChild(div); document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight; }
+        
+        function handleTyping() { if (socket && socket.readyState === 1) socket.send(JSON.stringify({type:'typing',username:currentUser})); }
 
-    function handleFileSelect(event) {
-        var file = event.target.files[0]; if (!file) return;
-        if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
-        if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
-        var reader = new FileReader();
-        reader.onload = function(e) {
-            var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
+        function handleFileSelect(event) {
+            var file = event.target.files[0]; if (!file) return;
+            if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
+            if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
+                if (currentChat==='general') msg.type='message';
+                else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
+                else { 
+                    msg.type='private'; msg.receiver=currentChat; 
+                    const recipientKey = userPublicKeys[currentChat]; 
+                    if (recipientKey) { 
+                        const enc = encryptMessage(e.target.result, recipientKey); 
+                        if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; } 
+                    } 
+                }
+                socket.send(JSON.stringify(msg));
+            }; reader.readAsDataURL(file); event.target.value = '';
+        }
+
+        function sendMessage() {
+            var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
+            if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
+            var msg = { text: input.value };
             if (currentChat==='general') msg.type='message';
             else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
             else { 
                 msg.type='private'; msg.receiver=currentChat; 
                 const recipientKey = userPublicKeys[currentChat]; 
                 if (recipientKey) { 
-                    const enc = encryptMessage(e.target.result, recipientKey); 
-                    if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; } 
+                    const enc = encryptMessage(input.value, recipientKey); 
+                    if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; msg.text = '[Зашифровано]'; } 
                 } 
             }
-            socket.send(JSON.stringify(msg));
-        }; reader.readAsDataURL(file); event.target.value = '';
-    }
-
-    function sendMessage() {
-        var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
-        if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
-        var msg = { text: input.value };
-        if (currentChat==='general') msg.type='message';
-        else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-        else { 
-            msg.type='private'; msg.receiver=currentChat; 
-            const recipientKey = userPublicKeys[currentChat]; 
-            if (recipientKey) { 
-                const enc = encryptMessage(input.value, recipientKey); 
-                if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; msg.text = '[Зашифровано]'; } 
-            } 
+            socket.send(JSON.stringify(msg)); input.value = '';
         }
-        socket.send(JSON.stringify(msg)); input.value = '';
-    }
 
-    function showCreateGroupModal() { document.getElementById('createGroupModal').classList.add('active'); }
-    function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
-    function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) hideCreateGroupModal(); else alert(d.message||'Ошибка'); }); }
+        function showCreateGroupModal() { document.getElementById('createGroupModal').classList.add('active'); }
+        function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
+        function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) hideCreateGroupModal(); else alert(d.message||'Ошибка'); }); }
 
-    // ==================== CALLS ====================
-    async function getMedia(facing) { try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } } }
-    function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
+        // ==================== CALLS ====================
+        async function getMedia(facing) { try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } } }
+        function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
 
-    async function startCall(target, event) {
-        if (event) event.stopPropagation();
-        currentCallTarget = target; currentFacingMode = 'user'; updateCallStatus('Вызов...');
-        try {
-            localStream = await getMedia(currentFacingMode);
-            document.getElementById('localVideo').srcObject = localStream;
-            document.getElementById('callScreen').classList.add('active');
-            currentCall = peer.call('msg_' + target, localStream, { metadata: { username: currentUser } });
-            if (!currentCall) { alert('Не удалось дозвониться'); endCall(); return; }
-            currentCall.on('stream', remoteStream => { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
-            currentCall.on('close', () => { alert(target + ' завершил звонок'); endCall(); });
-            currentCall.on('error', () => { alert('Ошибка соединения'); endCall(); });
-        } catch(err) { alert('Ошибка камеры: ' + err.message); endCall(); }
-    }
+        async function startCall(target, event) {
+            if (event) event.stopPropagation();
+            currentCallTarget = target; currentFacingMode = 'user'; updateCallStatus('Вызов...');
+            try {
+                localStream = await getMedia(currentFacingMode);
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('callScreen').classList.add('active');
+                // Находим ID собеседника среди его возможных ID
+                const targetPeerId = 'msg_' + target;
+                currentCall = peer.call(targetPeerId, localStream, { metadata: { username: currentUser } });
+                if (!currentCall) { alert('Не удалось дозвониться'); endCall(); return; }
+                currentCall.on('stream', remoteStream => { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
+                currentCall.on('close', () => { alert(target + ' завершил звонок'); endCall(); });
+                currentCall.on('error', () => { alert('Ошибка соединения'); endCall(); });
+            } catch(err) { alert('Ошибка камеры: ' + err.message); endCall(); }
+        }
 
-    async function acceptCall() {
-        document.getElementById('incomingCallModal').classList.remove('active');
-        updateCallStatus('Подключение...');
-        try {
-            localStream = await getMedia(currentFacingMode);
-            document.getElementById('localVideo').srcObject = localStream;
-            document.getElementById('callScreen').classList.add('active');
-            currentCall.answer(localStream);
-            currentCall.on('stream', remoteStream => { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
-            currentCall.on('close', () => endCall());
-        } catch(err) { alert('Ошибка: ' + err.message); endCall(); }
-    }
+        async function acceptCall() {
+            document.getElementById('incomingCallModal').classList.remove('active');
+            updateCallStatus('Подключение...');
+            try {
+                localStream = await getMedia(currentFacingMode);
+                document.getElementById('localVideo').srcObject = localStream;
+                document.getElementById('callScreen').classList.add('active');
+                currentCall.answer(localStream);
+                currentCall.on('stream', remoteStream => { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
+                currentCall.on('close', () => endCall());
+            } catch(err) { alert('Ошибка: ' + err.message); endCall(); }
+        }
 
-    function rejectCall() { document.getElementById('incomingCallModal').classList.remove('active'); if (currentCall) { currentCall.close(); currentCall = null; } }
+        function rejectCall() { document.getElementById('incomingCallModal').classList.remove('active'); if (currentCall) { currentCall.close(); currentCall = null; } }
 
-    async function switchCamera() {
-        if (!localStream || !currentCall) return;
-        currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-        try { var ns = await getMedia(currentFacingMode); var vt = ns.getVideoTracks()[0]; var sender = currentCall.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video'); if (sender) await sender.replaceTrack(vt); localStream.getVideoTracks().forEach(t => t.stop()); localStream = ns; document.getElementById('localVideo').srcObject = ns; } catch(err) { alert('Не удалось переключить камеру'); }
-    }
+        async function switchCamera() {
+            if (!localStream || !currentCall) return;
+            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+            try { var ns = await getMedia(currentFacingMode); var vt = ns.getVideoTracks()[0]; var sender = currentCall.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video'); if (sender) await sender.replaceTrack(vt); localStream.getVideoTracks().forEach(t => t.stop()); localStream = ns; document.getElementById('localVideo').srcObject = ns; } catch(err) { alert('Не удалось переключить камеру'); }
+        }
 
-    function toggleMute() {
-        if (!localStream) return; isMuted = !isMuted; localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-        document.getElementById('muteIcon').innerHTML = isMuted ? '<path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>' : '<path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>';
-    }
+        function toggleMute() {
+            if (!localStream) return; isMuted = !isMuted; localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+            document.getElementById('muteIcon').innerHTML = isMuted ? '<path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>' : '<path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>';
+        }
 
-    function endCall() {
-        if (currentCall) { currentCall.close(); currentCall = null; }
-        if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-        document.getElementById('callScreen').classList.remove('active'); document.getElementById('localVideo').srcObject = null; document.getElementById('remoteVideo').srcObject = null; currentCallTarget = ''; isMuted = false;
-    }
-</script>
+        function endCall() {
+            if (currentCall) { currentCall.close(); currentCall = null; }
+            if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+            document.getElementById('callScreen').classList.remove('active'); document.getElementById('localVideo').srcObject = null; document.getElementById('remoteVideo').srcObject = null; currentCallTarget = ''; isMuted = false;
+        }
+    </script>
 </body>
 </html>

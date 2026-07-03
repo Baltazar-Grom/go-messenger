@@ -240,6 +240,14 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			handleWebRTC(msg)
 			continue
 		}
+		if msg.Type == "set_public_key" {
+			mutex.Lock()
+			if c, ok := clients[conn]; ok {
+				c.PublicKey = msg.PublicKey
+			}
+			mutex.Unlock()
+			continue
+		}
 		if msg.Type == "group_message" && msg.GroupID != 0 {
 			db.Exec("INSERT INTO group_messages (group_id, username, text, image, file_name) VALUES (?, ?, ?, ?, ?)", msg.GroupID, username, msg.Text, msg.Image, msg.FileName)
 			handleGroupMessage(msg)
