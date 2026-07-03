@@ -3,17 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Go Мессенджер (Signal Protocol)</title>
-    <script src="https://cdn.jsdelivr.net/npm/libsignal-protocol-javascript@2.0.1/dist/libsignal-protocol.min.js"></script>
+    <title>Go Мессенджер</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        :root {
-            --primary: #0088cc; --primary-dark: #006699; --primary-light: #e3f2fd;
-            --bg: #ffffff; --bg-secondary: #f4f4f5; --text: #000000;
-            --text-secondary: #707579; --border: #e0e0e0; --message-out: #effdde;
-            --message-in: #ffffff; --hover: #f0f0f0; --success: #4caf50; --danger: #e74c3c;
-        }
+        :root { --primary: #0088cc; --primary-dark: #006699; --primary-light: #e3f2fd; --bg: #ffffff; --bg-secondary: #f4f4f5; --text: #000000; --text-secondary: #707579; --border: #e0e0e0; --message-out: #effdde; --message-in: #ffffff; --hover: #f0f0f0; --success: #4caf50; --danger: #e74c3c; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-secondary); height: 100vh; overflow: hidden; color: var(--text); }
         .auth-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .auth-container { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); width: 90%; max-width: 400px; animation: slideUp 0.4s ease; }
@@ -48,7 +42,6 @@
         .chat-name { font-weight: 600; font-size: 16px; margin-bottom: 5px; display: flex; align-items: center; gap: 8px; }
         .chat-meta { font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; gap: 5px; }
         .online-dot { width: 8px; height: 8px; background: var(--success); border-radius: 50%; display: inline-block; }
-        .e2e-badge { font-size: 10px; background: var(--success); color: white; padding: 2px 6px; border-radius: 10px; margin-left: 5px; }
         .call-btn-small { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .call-btn-small:hover { transform: scale(1.1); }
         .call-btn-small svg { width: 18px; height: 18px; fill: white; }
@@ -73,8 +66,6 @@
         .message-file-name { font-weight: 600; font-size: 14px; margin-bottom: 3px; }
         .message-file-download { color: var(--primary); text-decoration: none; font-size: 13px; }
         .message.system { align-self: center; background: rgba(0,0,0,0.05); color: var(--text-secondary); font-style: italic; max-width: 80%; }
-        .message.encrypted { border: 1px solid var(--success); }
-        .message.encrypted::after { content: '🔒'; position: absolute; top: -8px; right: -8px; background: var(--success); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
         .typing-indicator { padding: 0 20px; color: var(--text-secondary); font-size: 14px; font-style: italic; min-height: 20px; }
         .chat-input-container { padding: 15px 20px; background: var(--bg); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
         .chat-input { flex: 1; padding: 12px 16px; border: 1px solid var(--border); border-radius: 20px; font-size: 15px; outline: none; transition: border-color 0.3s; }
@@ -134,7 +125,7 @@
         <div class="auth-container">
             <div class="auth-logo">
                 <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="#0088cc"/></svg>
-                <h1>Go Мессенджер (Signal Protocol)</h1>
+                <h1>Go Мессенджер</h1>
             </div>
             <form class="auth-form" onsubmit="submitAuth(event)">
                 <input type="text" id="usernameInput" placeholder="Имя пользователя" required>
@@ -236,233 +227,9 @@
         var isRegisterMode = false, statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false, peer = null;
-        
-        // Signal Protocol Manager
-        let signalStore = null;
-        let signalInitialized = false;
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
-        // ==================== SIGNAL PROTOCOL ====================
-        
-        class SignalKeyStore {
-            constructor(username) {
-                this.username = username;
-                this.storageKey = `signal_keys_${username}`;
-                this.data = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
-            }
-
-            save() {
-                localStorage.setItem(this.storageKey, JSON.stringify(this.data));
-            }
-
-            getIdentityKeyPair() {
-                return this.data.identityKey ? libsignal.KeyHelper.decodeBase64(this.data.identityKey) : null;
-            }
-
-            getLocalRegistrationId() {
-                return this.data.registrationId || null;
-            }
-
-            getPreKey(keyId) {
-                return this.data.preKeys && this.data.preKeys[keyId] ? libsignal.KeyHelper.decodeBase64(this.data.preKeys[keyId]) : null;
-            }
-
-            getSignedPreKey(keyId) {
-                return this.data.signedPreKeys && this.data.signedPreKeys[keyId] ? libsignal.KeyHelper.decodeBase64(this.data.signedPreKeys[keyId]) : null;
-            }
-
-            storePreKey(keyId, keyPair) {
-                this.data.preKeys = this.data.preKeys || {};
-                this.data.preKeys[keyId] = libsignal.KeyHelper.encodeBase64(keyPair);
-                this.save();
-            }
-
-            storeSignedPreKey(keyId, keyPair) {
-                this.data.signedPreKeys = this.data.signedPreKeys || {};
-                this.data.signedPreKeys[keyId] = libsignal.KeyHelper.encodeBase64(keyPair);
-                this.save();
-            }
-
-            removePreKey(keyId) {
-                if (this.data.preKeys) {
-                    delete this.data.preKeys[keyId];
-                    this.save();
-                }
-            }
-
-            removeSignedPreKey(keyId) {
-                if (this.data.signedPreKeys) {
-                    delete this.data.signedPreKeys[keyId];
-                    this.save();
-                }
-            }
-
-            async loadSession(recipientId) {
-                const response = await fetch(`/signal/get_session?username=${this.username}&recipient=${recipientId}`);
-                const data = await response.json();
-                return data.session;
-            }
-
-            async storeSession(recipientId, record) {
-                await fetch('/signal/save_session', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: this.username,
-                        recipient: recipientId,
-                        session_record: libsignal.KeyHelper.encodeBase64(record)
-                    })
-                });
-            }
-
-            isTrustedIdentity(recipientId, identityKey) {
-                return Promise.resolve(true);
-            }
-
-            saveIdentity(recipientId, identityKey) {
-                return Promise.resolve(false);
-            }
-        }
-
-        async function initSignalProtocol() {
-            signalStore = new SignalKeyStore(currentUser);
-            
-            // Check if we already have keys
-            if (!signalStore.getIdentityKeyPair()) {
-                console.log('🔑 Generating new Signal Protocol keys...');
-                
-                // Generate identity key pair
-                const identityKeyPair = await libsignal.KeyHelper.generateIdentityKeyPair();
-                const registrationId = libsignal.KeyHelper.generateRegistrationId();
-                
-                // Generate prekeys
-                const preKeys = await libsignal.KeyHelper.generatePreKeys(1, 100);
-                const signedPreKey = await libsignal.KeyHelper.generateSignedPreKey(identityKeyPair, 1);
-                
-                // Store locally
-                signalStore.data.identityKey = libsignal.KeyHelper.encodeBase64(identityKeyPair);
-                signalStore.data.registrationId = registrationId;
-                
-                preKeys.forEach(pk => {
-                    signalStore.storePreKey(pk.keyId, pk.keyPair);
-                });
-                
-                signalStore.storeSignedPreKey(signedPreKey.keyId, signedPreKey.keyPair);
-                signalStore.save();
-                
-                // Register with server
-                await registerKeysWithServer(identityKeyPair, registrationId, preKeys, signedPreKey);
-                
-                console.log('✅ Signal Protocol initialized');
-            } else {
-                console.log('✅ Signal Protocol keys loaded from storage');
-            }
-            
-            signalInitialized = true;
-        }
-
-        async function registerKeysWithServer(identityKeyPair, registrationId, preKeys, signedPreKey) {
-            // Register identity key
-            await fetch('/signal/register_identity', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: currentUser,
-                    identity_key: libsignal.KeyHelper.encodeBase64(identityKeyPair.pubKey),
-                    registration_id: registrationId
-                })
-            });
-
-            // Register signed prekey
-            await fetch('/signal/register_signed_prekey', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: currentUser,
-                    key_id: signedPreKey.keyId,
-                    public_key: libsignal.KeyHelper.encodeBase64(signedPreKey.keyPair.pubKey),
-                    signature: libsignal.KeyHelper.encodeBase64(signedPreKey.signature)
-                })
-            });
-
-            // Register one-time prekeys
-            const preKeysData = preKeys.map(pk => ({
-                key_id: pk.keyId,
-                public_key: libsignal.KeyHelper.encodeBase64(pk.keyPair.pubKey)
-            }));
-
-            await fetch('/signal/register_one_time_prekeys', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: currentUser,
-                    pre_keys: preKeysData
-                })
-            });
-        }
-
-        async function encryptMessageFor(recipient, message) {
-            if (!signalInitialized) {
-                throw new Error('Signal Protocol not initialized');
-            }
-
-            const address = new libsignal.SignalProtocolAddress(recipient, 1);
-            const sessionBuilder = new libsignal.SessionBuilder(signalStore, address);
-            const sessionCipher = new libsignal.SessionCipher(signalStore, address);
-
-            // Fetch prekey bundle from server
-            const response = await fetch(`/signal/get_prekey_bundle?username=${recipient}`);
-            const bundle = await response.json();
-
-            if (!bundle.identity_key) {
-                throw new Error('User not found or no keys registered');
-            }
-
-            // Build session
-            const preKeyBundle = {
-                registrationId: bundle.registration_id,
-                identityKey: libsignal.KeyHelper.decodeBase64(bundle.identity_key).buffer,
-                signedPreKeyPub: libsignal.KeyHelper.decodeBase64(bundle.signed_pre_key).buffer,
-                signedPreKeySig: libsignal.KeyHelper.decodeBase64(bundle.signature).buffer,
-                preKeyPub: bundle.pre_key ? libsignal.KeyHelper.decodeBase64(bundle.pre_key).buffer : null,
-                preKeyId: bundle.pre_key_id
-            };
-
-            await sessionBuilder.processPreKeyBundle(preKeyBundle);
-
-            // Encrypt message
-            const plaintext = new TextEncoder().encode(message);
-            const ciphertext = await sessionCipher.encrypt(plaintext);
-
-            return {
-                type: ciphertext.type,
-                body: libsignal.KeyHelper.encodeBase64(ciphertext.body),
-                registrationId: ciphertext.registrationId
-            };
-        }
-
-        async function decryptMessageFrom(sender, ciphertext) {
-            if (!signalInitialized) {
-                throw new Error('Signal Protocol not initialized');
-            }
-
-            const address = new libsignal.SignalProtocolAddress(sender, 1);
-            const sessionCipher = new libsignal.SessionCipher(signalStore, address);
-
-            const ciphertextBuffer = libsignal.KeyHelper.decodeBase64(ciphertext.body).buffer;
-
-            let plaintext;
-            if (ciphertext.type === 3) { // PreKeyWhisperMessage
-                plaintext = await sessionCipher.decryptPreKeyWhisperMessage(ciphertextBuffer, 'binary');
-            } else { // WhisperMessage
-                plaintext = await sessionCipher.decryptWhisperMessage(ciphertextBuffer, 'binary');
-            }
-
-            return new TextDecoder().decode(plaintext);
-        }
-
-        // ==================== AUTH & WS ====================
         function toggleAuthMode() {
             isRegisterMode = !isRegisterMode;
             document.getElementById('authBtnText').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
@@ -471,41 +238,28 @@
             document.getElementById('authError').textContent = '';
         }
 
-        async function submitAuth(e) {
+        function submitAuth(e) {
             e.preventDefault();
             var username = document.getElementById('usernameInput').value.trim();
             var password = document.getElementById('passwordInput').value;
             var errorDiv = document.getElementById('authError');
             errorDiv.textContent = '';
             if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
-            
-            try {
-                const response = await fetch(isRegisterMode ? '/register' : '/login', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-                const data = await response.json();
-                
+            fetch(isRegisterMode ? '/register' : '/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            }).then(r => r.json()).then(data => {
                 if (data.success) {
                     currentUser = username;
                     localStorage.setItem('messenger_username', username);
-                    
-                    // Initialize Signal Protocol
-                    await initSignalProtocol();
-                    
                     document.getElementById('authScreen').classList.add('hidden');
                     document.getElementById('app').classList.add('active');
                     connectWebSocket();
                 } else { errorDiv.textContent = data.message || 'Ошибка'; }
-            } catch (err) { errorDiv.textContent = 'Ошибка соединения'; }
+            }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
         }
 
-        function logout() { 
-            if (peer) peer.destroy();
-            localStorage.removeItem('messenger_username');
-            localStorage.removeItem(`signal_keys_${currentUser}`);
-            location.reload(); 
-        }
+        function logout() { if (peer) peer.destroy(); localStorage.removeItem('messenger_username'); location.reload(); }
 
         function connectWebSocket() {
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
@@ -513,9 +267,11 @@
             socket.onopen = function() {
                 socket.send(JSON.stringify({ type: "register", username: currentUser }));
                 loadGeneralHistory();
+                loadGroups();
+                loadAvailableGroups();
                 initPeer();
             };
-            socket.onmessage = async function(event) {
+            socket.onmessage = function(event) {
                 var data = JSON.parse(event.data);
                 if (data.type === "typing") {
                     document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
@@ -523,32 +279,12 @@
                     statusTimer = setTimeout(function() { document.getElementById('typingIndicator').textContent = ''; }, 2000);
                     return;
                 }
-                if (data.type === "user_list") {
-                    updateUserList(data.users);
-                    return;
-                }
                 if (data.type === "message" && currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 else if (data.type === "private") {
                     var partner = data.username === currentUser ? data.receiver : data.username;
-                    if (currentChat === partner) {
-                        let text = data.text;
-                        let isEncrypted = false;
-                        
-                        // Decrypt if encrypted
-                        if (data.encrypted_message) {
-                            try {
-                                const ciphertext = JSON.parse(data.encrypted_message);
-                                text = await decryptMessageFrom(data.username, ciphertext);
-                                isEncrypted = true;
-                            } catch (err) {
-                                console.error('Decryption failed:', err);
-                                text = '[Ошибка расшифровки]';
-                            }
-                        }
-                        
-                        addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, isEncrypted);
-                    }
+                    if (currentChat === partner) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
+                else if (data.type === "user_list") updateUserList(data.users);
                 else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
             };
         }
@@ -564,89 +300,46 @@
                 document.getElementById('incomingCallAvatar').textContent = currentCallTarget.charAt(0).toUpperCase();
                 document.getElementById('incomingCallModal').classList.add('active');
             });
-            peer.on('error', err => console.error('PeerJS error:', err));
+            peer.on('error', err => {
+                if (err.type === 'unavailable-id') {
+                    peer.destroy();
+                    setTimeout(initPeer, 1000);
+                } else {
+                    console.error('PeerJS error:', err);
+                }
+            });
         }
 
-        window.onload = async function() {
+        window.onload = function() {
             var saved = localStorage.getItem('messenger_username');
-            if (saved) { 
-                currentUser = saved; 
-                await initSignalProtocol();
-                document.getElementById('authScreen').classList.add('hidden'); 
-                document.getElementById('app').classList.add('active'); 
-                connectWebSocket(); 
-            }
+            if (saved) { currentUser = saved; document.getElementById('authScreen').classList.add('hidden'); document.getElementById('app').classList.add('active'); connectWebSocket(); }
         };
 
-        // ==================== UI & CHATS ====================
-        function switchToGeneral() { 
-            currentChat = 'general'; currentGroupID = 0; 
-            document.getElementById('chatHeaderName').textContent = 'Общий чат'; 
-            document.getElementById('chatHeaderStatus').textContent = 'Все участники'; 
-            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
-            document.getElementById('generalChat').classList.add('active'); 
-            document.getElementById('chatMessages').innerHTML = ''; 
-            loadGeneralHistory(); 
-            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
-        }
-        
-        function switchToPrivate(u) { 
-            currentChat = u; currentGroupID = 0; 
-            document.getElementById('chatHeaderName').textContent = u; 
-            document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E'; 
-            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
-            event.currentTarget.classList.add('active'); 
-            document.getElementById('chatMessages').innerHTML = ''; 
-            loadPrivateHistory(u);
-            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
-        }
-        
-        function switchToGroup(id, name) { 
-            currentChat = 'group'; currentGroupID = id; 
-            document.getElementById('chatHeaderName').textContent = name; 
-            document.getElementById('chatHeaderStatus').textContent = 'Групповой чат'; 
-            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); 
-            event.currentTarget.classList.add('active'); 
-            document.getElementById('chatMessages').innerHTML = ''; 
-            loadGroupHistory(id);
-            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); 
-        }
-        
+        function switchToGeneral() { currentChat = 'general'; currentGroupID = 0; document.getElementById('chatHeaderName').textContent = 'Общий чат'; document.getElementById('chatHeaderStatus').textContent = 'Все участники'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); document.getElementById('generalChat').classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadGeneralHistory(); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
+        function switchToPrivate(u) { currentChat = u; currentGroupID = 0; document.getElementById('chatHeaderName').textContent = u; document.getElementById('chatHeaderStatus').textContent = 'В сети'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadPrivateHistory(u); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
+        function switchToGroup(id, name) { currentChat = 'group'; currentGroupID = id; document.getElementById('chatHeaderName').textContent = name; document.getElementById('chatHeaderStatus').textContent = 'Групповой чат'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadGroupHistory(id); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
         function backToList() { document.getElementById('chatArea').classList.remove('active'); }
 
-        function loadGeneralHistory() { 
-            fetch('/history').then(r=>r.json()).then(d => { 
-                if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); 
-            }); 
+        function loadGeneralHistory() { fetch('/history').then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
+        function loadPrivateHistory(p) { fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.sender, m.text, m.image, m.file_name, m.sender === currentUser)); }); }
+        function loadGroupHistory(id) { fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
+
+        function loadGroups() {
+            fetch('/groups?username='+currentUser).then(r=>r.json()).then(d => {
+                var l = document.getElementById('groupList'); l.innerHTML = '';
+                if(d) d.forEach(g => {
+                    var div = document.createElement('div'); div.className = 'chat-item';
+                    div.innerHTML = '<div class="chat-avatar"><svg viewBox="0 0 24 24" fill="white" width="28" height="28"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg></div><div class="chat-info"><div class="chat-name">' + g.name + '</div><div class="chat-meta">Группа</div></div>';
+                    div.onclick = function(e) { switchToGroup(g.id, g.name); };
+                    l.appendChild(div);
+                });
+            });
         }
-        
-        async function loadPrivateHistory(p) { 
-            const data = await fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json());
-            if (data) { 
-                for (const m of data) { 
-                    let text = m.text; 
-                    let isEncrypted = false;
-                    
-                    if (m.encrypted_message) {
-                        try {
-                            const ciphertext = JSON.parse(m.encrypted_message);
-                            text = await decryptMessageFrom(m.sender, ciphertext);
-                            isEncrypted = true;
-                        } catch (err) {
-                            console.error('Decryption failed:', err);
-                            text = '[Ошибка расшифровки]';
-                        }
-                    }
-                    
-                    addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, isEncrypted); 
-                } 
-            } 
-        }
-        
-        function loadGroupHistory(id) { 
-            fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { 
-                if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); 
-            }); 
+
+        function loadAvailableGroups() {
+            fetch('/available_groups?username='+currentUser).then(r=>r.json()).then(d => {
+                // Можно добавить список доступных для вступления групп
+            });
         }
 
         function updateUserList(users) {
@@ -654,22 +347,20 @@
             var others = users.filter(u => u !== currentUser);
             others.forEach(function(u) {
                 var div = document.createElement('div'); div.className = 'chat-item';
-                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span><span class="e2e-badge">🔒</span></div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
+                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span></div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
                 div.onclick = function() { switchToPrivate(u); }; list.appendChild(div);
             });
         }
 
-        function addMessageToUI(username, text, image, fileName, isOwn, isEncrypted = false) {
-            var div = document.createElement('div'); div.className = 'message ' + (isOwn ? 'out' : 'in') + (isEncrypted ? ' encrypted' : '');
-            var content = '<div class="message-meta">' + username + (isEncrypted ? ' 🔒' : '') + '</div>';
+        function addMessageToUI(username, text, image, fileName, isOwn) {
+            var div = document.createElement('div'); div.className = 'message ' + (isOwn ? 'out' : 'in');
+            var content = '<div class="message-meta">' + username + '</div>';
             if (fileName) content += '<div class="message-file"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><div class="message-file-info"><div class="message-file-name">' + fileName + '</div><a href="' + image + '" download="' + fileName + '" class="message-file-download">Скачать</a></div></div>';
             else if (image) content += '<img src="' + image + '" class="message-image" onclick="window.open(this.src)">';
             if (text) content += '<div class="message-text">' + text + '</div>';
             div.innerHTML = content; document.getElementById('chatMessages').appendChild(div); document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
         }
-        
         function addSystemMessage(text) { var div = document.createElement('div'); div.className = 'message system'; div.innerHTML = text; document.getElementById('chatMessages').appendChild(div); document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight; }
-        
         function handleTyping() { if (socket && socket.readyState === 1) socket.send(JSON.stringify({type:'typing',username:currentUser})); }
 
         function handleFileSelect(event) {
@@ -677,52 +368,29 @@
             if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var reader = new FileReader();
-            reader.onload = async function(e) {
+            reader.onload = function(e) {
                 var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
                 if (currentChat==='general') msg.type='message';
                 else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-                else { 
-                    msg.type='private'; msg.receiver=currentChat; 
-                    try {
-                        const encrypted = await encryptMessageFor(currentChat, e.target.result);
-                        msg.encrypted_message = JSON.stringify(encrypted);
-                        msg.text = '[Зашифровано]';
-                    } catch (err) {
-                        console.error('Encryption failed:', err);
-                        alert('Не удалось зашифровать файл');
-                        return;
-                    }
-                }
+                else { msg.type='private'; msg.receiver=currentChat; }
                 socket.send(JSON.stringify(msg));
             }; reader.readAsDataURL(file); event.target.value = '';
         }
 
-        async function sendMessage() {
+        function sendMessage() {
             var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var msg = { text: input.value };
             if (currentChat==='general') msg.type='message';
             else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-            else { 
-                msg.type='private'; msg.receiver=currentChat; 
-                try {
-                    const encrypted = await encryptMessageFor(currentChat, input.value);
-                    msg.encrypted_message = JSON.stringify(encrypted);
-                    msg.text = '[Зашифровано]';
-                } catch (err) {
-                    console.error('Encryption failed:', err);
-                    alert('Не удалось зашифровать сообщение');
-                    return;
-                }
-            }
+            else { msg.type='private'; msg.receiver=currentChat; }
             socket.send(JSON.stringify(msg)); input.value = '';
         }
 
         function showCreateGroupModal() { document.getElementById('createGroupModal').classList.add('active'); }
         function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
-        function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) hideCreateGroupModal(); else alert(d.message||'Ошибка'); }); }
+        function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) { hideCreateGroupModal(); loadGroups(); } else alert(d.message||'Ошибка'); }); }
 
-        // ==================== CALLS ====================
         async function getMedia(facing) { try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } } }
         function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
 
