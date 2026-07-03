@@ -8,15 +8,8 @@
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        :root {
-            --primary: #0088cc; --primary-dark: #006699; --primary-light: #e3f2fd;
-            --bg: #ffffff; --bg-secondary: #f4f4f5; --text: #000000;
-            --text-secondary: #707579; --border: #e0e0e0; --message-out: #effdde;
-            --message-in: #ffffff; --hover: #f0f0f0; --success: #4caf50; --danger: #e74c3c;
-        }
+        :root { --primary: #0088cc; --primary-dark: #006699; --primary-light: #e3f2fd; --bg: #ffffff; --bg-secondary: #f4f4f5; --text: #000000; --text-secondary: #707579; --border: #e0e0e0; --message-out: #effdde; --message-in: #ffffff; --hover: #f0f0f0; --success: #4caf50; --danger: #e74c3c; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-secondary); height: 100vh; overflow: hidden; color: var(--text); }
-        
-        /* Auth Screen */
         .auth-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .auth-container { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); width: 90%; max-width: 400px; animation: slideUp 0.4s ease; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -31,8 +24,6 @@
         .auth-toggle { text-align: center; margin-top: 20px; color: var(--text-secondary); }
         .auth-toggle a { color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
         .auth-error { color: var(--danger); text-align: center; margin-top: 15px; font-size: 14px; min-height: 20px; }
-
-        /* App Layout */
         .app { display: none; height: 100vh; width: 100%; }
         .app.active { display: flex; }
         .sidebar { width: 350px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
@@ -56,8 +47,6 @@
         .call-btn-small { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .call-btn-small:hover { transform: scale(1.1); }
         .call-btn-small svg { width: 18px; height: 18px; fill: white; }
-
-        /* Chat Area */
         .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-secondary); }
         .chat-header { padding: 15px 20px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 15px; }
         .back-btn { display: none; }
@@ -88,7 +77,6 @@
         .send-btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .send-btn:hover { background: var(--primary-dark); transform: scale(1.05); }
         .send-btn svg { width: 20px; height: 20px; fill: white; }
-
         @media (max-width: 768px) {
             .sidebar { width: 100%; }
             .chat-area { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
@@ -96,8 +84,6 @@
             .back-btn { display: flex; }
             .message { max-width: 85%; }
         }
-
-        /* Modals */
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
         .modal.active { display: flex; }
         .modal-content { background: white; padding: 30px; border-radius: 15px; width: 90%; max-width: 400px; animation: slideUp 0.3s ease; }
@@ -108,8 +94,6 @@
         .modal-btn:hover { transform: translateY(-2px); }
         .modal-btn.primary { background: var(--primary); color: white; }
         .modal-btn.secondary { background: var(--bg-secondary); color: var(--text); }
-
-        /* Call */
         .call-screen { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; display: none; flex-direction: column; z-index: 3000; overflow: hidden; }
         .call-screen.active { display: flex; }
         .call-video-container { flex: 1; position: relative; width: 100%; height: 100%; overflow: hidden; }
@@ -123,7 +107,6 @@
         .call-control-btn.end { background: var(--danger); }
         .call-control-btn.mute { background: #7f8c8d; }
         .call-control-btn.switch { background: var(--primary); }
-
         .incoming-call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 4000; backdrop-filter: blur(5px); }
         .incoming-call-modal.active { display: flex; }
         .incoming-call-content { background: white; padding: 40px; border-radius: 20px; width: 90%; max-width: 380px; text-align: center; animation: slideUp 0.4s ease; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
@@ -142,7 +125,6 @@
     </style>
 </head>
 <body>
-    <!-- Auth Screen -->
     <div class="auth-screen" id="authScreen">
         <div class="auth-container">
             <div class="auth-logo">
@@ -165,7 +147,6 @@
         </div>
     </div>
 
-    <!-- App -->
     <div class="app" id="app">
         <div class="sidebar">
             <div class="sidebar-header">
@@ -203,7 +184,6 @@
         </div>
     </div>
 
-    <!-- Create Group Modal -->
     <div class="modal" id="createGroupModal">
         <div class="modal-content">
             <h3>Создать группу</h3>
@@ -215,7 +195,6 @@
         </div>
     </div>
 
-    <!-- Incoming Call Modal -->
     <div class="incoming-call-modal" id="incomingCallModal">
         <div class="incoming-call-content">
             <div class="incoming-call-avatar" id="incomingCallAvatar">?</div>
@@ -234,7 +213,6 @@
         </div>
     </div>
 
-    <!-- Call Screen -->
     <div class="call-screen" id="callScreen">
         <div class="call-video-container">
             <video class="remote-video" id="remoteVideo" autoplay playsinline></video>
@@ -428,10 +406,24 @@
             };
         }
 
+        // ==================== PEERJS (ИСПРАВЛЕННЫЙ) ====================
+        
         function initPeer() {
-            const peerId = 'msg_' + currentUser + '_' + Math.random().toString(36).substr(2, 9);
+            // ВАЖНО: используем ФИКСИРОВАННЫЙ ID = msg_ + username
+            // Это гарантирует, что собеседник сможет найти нас по username
+            const peerId = 'msg_' + currentUser;
+            
+            // Если уже есть peer — уничтожаем старый
+            if (peer) {
+                try { peer.destroy(); } catch(e) {}
+            }
+            
             peer = new Peer(peerId, { debug: 2 });
-            peer.on('open', id => console.log('PeerJS ID:', id));
+            
+            peer.on('open', id => {
+                console.log('✅ PeerJS подключён с ID:', id);
+            });
+            
             peer.on('call', call => {
                 currentCall = call;
                 currentCallTarget = call.metadata.username || 'Неизвестный';
@@ -439,13 +431,37 @@
                 document.getElementById('incomingCallAvatar').textContent = currentCallTarget.charAt(0).toUpperCase();
                 document.getElementById('incomingCallModal').classList.add('active');
             });
+            
             peer.on('error', err => {
+                console.error('PeerJS error:', err.type, err.message);
+                
                 if (err.type === 'unavailable-id') {
-                    peer.destroy();
-                    setTimeout(initPeer, 1000);
-                } else {
-                    console.error('PeerJS error:', err);
+                    // ID уже занят (например, пользователь открыл вторую вкладку)
+                    // Уничтожаем старую сессию и переподключаемся
+                    console.log('⚠️ ID занят, пытаемся освободить...');
+                    setTimeout(() => {
+                        if (peer) peer.destroy();
+                        initPeer();
+                    }, 2000);
+                } else if (err.type === 'peer-unavailable') {
+                    // Пользователь не в сети
+                    alert('Пользователь ' + currentCallTarget + ' сейчас не в сети или не может принять звонок');
+                    endCall();
+                } else if (err.type === 'network') {
+                    alert('Ошибка сети. Проверьте подключение к интернету.');
+                } else if (err.type === 'server-error') {
+                    console.log('Сервер PeerJS недоступен, переподключение...');
+                    setTimeout(initPeer, 3000);
                 }
+            });
+            
+            peer.on('disconnected', () => {
+                console.log('⚠️ PeerJS отключён, переподключение...');
+                setTimeout(() => {
+                    if (peer && !peer.destroyed) {
+                        try { peer.reconnect(); } catch(e) { initPeer(); }
+                    }
+                }, 2000);
             });
         }
 
@@ -615,24 +631,81 @@
         function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
         function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) { hideCreateGroupModal(); loadGroups(); } else alert(d.message||'Ошибка'); }); }
 
-        // ==================== CALLS ====================
-        async function getMedia(facing) { try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } } }
+        // ==================== CALLS (ИСПРАВЛЕННЫЕ) ====================
+        async function getMedia(facing) { 
+            try { 
+                return await navigator.mediaDevices.getUserMedia({ 
+                    audio: { echoCancellation: true, noiseSuppression: true }, 
+                    video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } 
+                }); 
+            } catch(e) { 
+                try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } 
+                catch(e2) { throw e2; } 
+            } 
+        }
+        
         function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
 
         async function startCall(target, event) {
             if (event) event.stopPropagation();
-            currentCallTarget = target; currentFacingMode = 'user'; updateCallStatus('Вызов...');
+            
+            // Проверяем, что PeerJS готов
+            if (!peer || peer.destroyed) {
+                alert('Система звонков ещё не готова. Подождите пару секунд.');
+                return;
+            }
+            
+            if (!peer.open) {
+                alert('PeerJS не подключён. Проверьте интернет и попробуйте снова.');
+                return;
+            }
+            
+            currentCallTarget = target; 
+            currentFacingMode = 'user'; 
+            updateCallStatus('Вызов...');
+            
             try {
                 localStream = await getMedia(currentFacingMode);
                 document.getElementById('localVideo').srcObject = localStream;
                 document.getElementById('callScreen').classList.add('active');
+                
+                // ВАЖНО: используем ТОТ ЖЕ фиксированный ID что и у собеседника
                 const targetPeerId = 'msg_' + target;
-                currentCall = peer.call(targetPeerId, localStream, { metadata: { username: currentUser } });
-                if (!currentCall) { alert('Не удалось дозвониться'); endCall(); return; }
-                currentCall.on('stream', remoteStream => { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
-                currentCall.on('close', () => { alert(target + ' завершил звонок'); endCall(); });
-                currentCall.on('error', () => { alert('Ошибка соединения'); endCall(); });
-            } catch(err) { alert('Ошибка камеры: ' + err.message); endCall(); }
+                console.log('📞 Звоним на:', targetPeerId);
+                
+                currentCall = peer.call(targetPeerId, localStream, { 
+                    metadata: { username: currentUser } 
+                });
+                
+                if (!currentCall) { 
+                    alert('Не удалось начать звонок'); 
+                    endCall(); 
+                    return; 
+                }
+                
+                currentCall.on('stream', remoteStream => { 
+                    console.log('✅ Получен поток от собеседника');
+                    document.getElementById('remoteVideo').srcObject = remoteStream; 
+                    updateCallStatus('Подключено'); 
+                });
+                
+                currentCall.on('close', () => { 
+                    console.log('📴 Звонок завершён собеседником');
+                    alert(target + ' завершил звонок'); 
+                    endCall(); 
+                });
+                
+                currentCall.on('error', (err) => { 
+                    console.error('Ошибка звонка:', err);
+                    alert('Ошибка соединения во время звонка'); 
+                    endCall(); 
+                });
+                
+            } catch(err) { 
+                console.error('Ошибка камеры:', err);
+                alert('Ошибка доступа к камере/микрофону: ' + err.message); 
+                endCall(); 
+            }
         }
 
         async function acceptCall() {
@@ -643,28 +716,66 @@
                 document.getElementById('localVideo').srcObject = localStream;
                 document.getElementById('callScreen').classList.add('active');
                 currentCall.answer(localStream);
-                currentCall.on('stream', remoteStream => { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
+                currentCall.on('stream', remoteStream => { 
+                    document.getElementById('remoteVideo').srcObject = remoteStream; 
+                    updateCallStatus('Подключено'); 
+                });
                 currentCall.on('close', () => endCall());
-            } catch(err) { alert('Ошибка: ' + err.message); endCall(); }
+                currentCall.on('error', () => {
+                    alert('Ошибка во время звонка');
+                    endCall();
+                });
+            } catch(err) { 
+                alert('Ошибка: ' + err.message); 
+                endCall(); 
+            }
         }
 
-        function rejectCall() { document.getElementById('incomingCallModal').classList.remove('active'); if (currentCall) { currentCall.close(); currentCall = null; } }
+        function rejectCall() { 
+            document.getElementById('incomingCallModal').classList.remove('active'); 
+            if (currentCall) { 
+                currentCall.close(); 
+                currentCall = null; 
+            } 
+        }
 
         async function switchCamera() {
             if (!localStream || !currentCall) return;
             currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-            try { var ns = await getMedia(currentFacingMode); var vt = ns.getVideoTracks()[0]; var sender = currentCall.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video'); if (sender) await sender.replaceTrack(vt); localStream.getVideoTracks().forEach(t => t.stop()); localStream = ns; document.getElementById('localVideo').srcObject = ns; } catch(err) { alert('Не удалось переключить камеру'); }
+            try { 
+                var ns = await getMedia(currentFacingMode); 
+                var vt = ns.getVideoTracks()[0]; 
+                var sender = currentCall.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video'); 
+                if (sender) await sender.replaceTrack(vt); 
+                localStream.getVideoTracks().forEach(t => t.stop()); 
+                localStream = ns; 
+                document.getElementById('localVideo').srcObject = ns; 
+            } catch(err) { 
+                alert('Не удалось переключить камеру'); 
+            }
         }
 
         function toggleMute() {
-            if (!localStream) return; isMuted = !isMuted; localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+            if (!localStream) return; 
+            isMuted = !isMuted; 
+            localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
             document.getElementById('muteIcon').innerHTML = isMuted ? '<path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>' : '<path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>';
         }
 
         function endCall() {
-            if (currentCall) { currentCall.close(); currentCall = null; }
-            if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-            document.getElementById('callScreen').classList.remove('active'); document.getElementById('localVideo').srcObject = null; document.getElementById('remoteVideo').srcObject = null; currentCallTarget = ''; isMuted = false;
+            if (currentCall) { 
+                currentCall.close(); 
+                currentCall = null; 
+            }
+            if (localStream) { 
+                localStream.getTracks().forEach(t => t.stop()); 
+                localStream = null; 
+            }
+            document.getElementById('callScreen').classList.remove('active'); 
+            document.getElementById('localVideo').srcObject = null; 
+            document.getElementById('remoteVideo').srcObject = null; 
+            currentCallTarget = ''; 
+            isMuted = false;
         }
     </script>
 </body>
