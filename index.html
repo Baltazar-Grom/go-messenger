@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Go Мессенджер</title>
+    <title>Go Мессенджер (E2E)</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -32,7 +32,6 @@
             color: var(--text);
         }
         
-        /* ==================== ЭКРАН ВХОДА ==================== */
         .auth-screen {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -137,7 +136,6 @@
             min-height: 20px;
         }
         
-        /* ==================== ОСНОВНОЙ ИНТЕРФЕЙС ==================== */
         .app {
             display: none;
             height: 100vh;
@@ -148,7 +146,6 @@
             display: flex;
         }
         
-        /* Sidebar (список чатов) */
         .sidebar {
             width: 350px;
             background: var(--bg);
@@ -271,6 +268,15 @@
             display: inline-block;
         }
         
+        .e2e-badge {
+            font-size: 10px;
+            background: var(--success);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+        }
+        
         .call-btn-small {
             width: 36px;
             height: 36px;
@@ -295,7 +301,6 @@
             fill: white;
         }
         
-        /* Chat Area */
         .chat-area {
             flex: 1;
             display: flex;
@@ -428,6 +433,27 @@
             max-width: 80%;
         }
         
+        .message.encrypted {
+            border: 1px solid var(--success);
+            position: relative;
+        }
+        
+        .message.encrypted::after {
+            content: '🔒';
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: var(--success);
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+        
         .typing-indicator {
             padding: 0 20px;
             color: var(--text-secondary);
@@ -483,7 +509,6 @@
             fill: white;
         }
         
-        /* ==================== МОБИЛЬНЫЙ ДИЗАЙН ==================== */
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -509,7 +534,6 @@
             }
         }
         
-        /* ==================== МОДАЛЬНЫЕ ОКНА ==================== */
         .modal {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -585,7 +609,6 @@
             background: var(--hover);
         }
         
-        /* ==================== ЗВОНОК ==================== */
         .call-screen {
             position: fixed;
             top: 0; left: 0; width: 100vw; height: 100vh;
@@ -696,7 +719,6 @@
             background: var(--primary-dark);
         }
         
-        /* ==================== МОДАЛКА ВХОДЯЩЕГО ЗВОНКА ==================== */
         .incoming-call-modal {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -812,14 +834,13 @@
     </style>
 </head>
 <body>
-    <!-- ЭКРАН АВТОРИЗАЦИИ -->
     <div class="auth-screen" id="authScreen">
         <div class="auth-container">
             <div class="auth-logo">
                 <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="#0088cc"/>
                 </svg>
-                <h1>Go Мессенджер</h1>
+                <h1>Go Мессенджер (E2E)</h1>
             </div>
             <form class="auth-form" onsubmit="submitAuth(event)">
                 <input type="text" id="usernameInput" placeholder="Имя пользователя" required>
@@ -837,9 +858,7 @@
         </div>
     </div>
 
-    <!-- ОСНОВНОЕ ПРИЛОЖЕНИЕ -->
     <div class="app" id="app">
-        <!-- SIDEBAR (СПИСОК ЧАТОВ) -->
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <h2>Чаты</h2>
@@ -867,7 +886,6 @@
             </div>
         </div>
 
-        <!-- CHAT AREA -->
         <div class="chat-area" id="chatArea">
             <div class="chat-header">
                 <button class="icon-btn back-btn" onclick="backToList()">
@@ -893,7 +911,6 @@
         </div>
     </div>
 
-    <!-- МОДАЛКА СОЗДАНИЯ ГРУППЫ -->
     <div class="modal" id="createGroupModal">
         <div class="modal-content">
             <h3>Создать группу</h3>
@@ -905,7 +922,6 @@
         </div>
     </div>
 
-    <!-- МОДАЛКА ВХОДЯЩЕГО ЗВОНКА -->
     <div class="incoming-call-modal" id="incomingCallModal">
         <div class="incoming-call-content">
             <div class="incoming-call-avatar" id="incomingCallAvatar">?</div>
@@ -928,7 +944,6 @@
         </div>
     </div>
 
-    <!-- ЭКРАН ЗВОНКА -->
     <div class="call-screen" id="callScreen">
         <div class="call-video-container">
             <video class="remote-video" id="remoteVideo" autoplay playsinline></video>
@@ -953,10 +968,174 @@
         var isRegisterMode = false, statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false, peer = null;
+        
+        // E2E Encryption переменные
+        let privateKey = null;
+        let publicKey = null;
+        let publicKeyBase64 = null;
+        let userPublicKeys = {}; // Хранилище публичных ключей пользователей
 
         const icons = {
             videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>'
         };
+
+        // ==================== E2E ENCRYPTION FUNCTIONS ====================
+        
+        async function generateKeyPair() {
+            const keyPair = await crypto.subtle.generateKey(
+                {
+                    name: 'ECDH',
+                    namedCurve: 'P-256'
+                },
+                true,
+                ['deriveBits', 'deriveKey']
+            );
+            privateKey = keyPair.privateKey;
+            publicKey = keyPair.publicKey;
+            
+            // Экспортируем публичный ключ в base64
+            const exported = await crypto.subtle.exportKey('spki', publicKey);
+            publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
+            
+            console.log('E2E ключи сгенерированы');
+        }
+
+        async function importPublicKey(base64Key) {
+            const binaryString = atob(base64Key);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            return await crypto.subtle.importKey(
+                'spki',
+                bytes,
+                {
+                    name: 'ECDH',
+                    namedCurve: 'P-256'
+                },
+                true,
+                []
+            );
+        }
+
+        async function encryptMessage(text, recipientPublicKeyBase64) {
+            // Генерируем случайный AES-256 ключ
+            const aesKey = await crypto.subtle.generateKey(
+                { name: 'AES-GCM', length: 256 },
+                true,
+                ['encrypt', 'decrypt']
+            );
+
+            // Импортируем публичный ключ получателя
+            const recipientPublicKey = await importPublicKey(recipientPublicKeyBase64);
+
+            // Получаем общий секрет через ECDH
+            const sharedSecret = await crypto.subtle.deriveBits(
+                {
+                    name: 'ECDH',
+                    public: recipientPublicKey
+                },
+                privateKey,
+                256
+            );
+
+            // Импортируем общий секрет как AES ключ
+            const derivedKey = await crypto.subtle.importKey(
+                'raw',
+                sharedSecret,
+                { name: 'AES-GCM' },
+                false,
+                ['encrypt']
+            );
+
+            // Генерируем IV
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+
+            // Шифруем сообщение
+            const encoder = new TextEncoder();
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                derivedKey,
+                encoder.encode(text)
+            );
+
+            // Экспортируем AES ключ для шифрования
+            const exportedAesKey = await crypto.subtle.exportKey('raw', aesKey);
+            const encryptedAesKey = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                derivedKey,
+                exportedAesKey
+            );
+
+            return {
+                encrypted: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+                encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedAesKey))),
+                iv: btoa(String.fromCharCode(...iv))
+            };
+        }
+
+        async function decryptMessage(encryptedBase64, encryptedKeyBase64, ivBase64, senderPublicKeyBase64) {
+            try {
+                // Декодируем данные
+                const encrypted = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+                const encryptedKey = Uint8Array.from(atob(encryptedKeyBase64), c => c.charCodeAt(0));
+                const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
+
+                // Импортируем публичный ключ отправителя
+                const senderPublicKey = await importPublicKey(senderPublicKeyBase64);
+
+                // Получаем общий секрет
+                const sharedSecret = await crypto.subtle.deriveBits(
+                    {
+                        name: 'ECDH',
+                        public: senderPublicKey
+                    },
+                    privateKey,
+                    256
+                );
+
+                // Импортируем общий секрет как AES ключ
+                const derivedKey = await crypto.subtle.importKey(
+                    'raw',
+                    sharedSecret,
+                    { name: 'AES-GCM' },
+                    false,
+                    ['decrypt']
+                );
+
+                // Расшифровываем AES ключ
+                const aesKeyRaw = await crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv: iv },
+                    derivedKey,
+                    encryptedKey
+                );
+
+                // Импортируем AES ключ
+                const aesKey = await crypto.subtle.importKey(
+                    'raw',
+                    aesKeyRaw,
+                    { name: 'AES-GCM' },
+                    false,
+                    ['decrypt']
+                );
+
+                // Расшифровываем сообщение
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv: iv },
+                    aesKey,
+                    encrypted
+                );
+
+                const decoder = new TextDecoder();
+                return decoder.decode(decrypted);
+            } catch (err) {
+                console.error('Ошибка расшифровки:', err);
+                return '[Ошибка расшифровки]';
+            }
+        }
+
+        // ==================== AUTH FUNCTIONS ====================
 
         function toggleAuthMode() {
             isRegisterMode = !isRegisterMode;
@@ -966,25 +1145,33 @@
             document.getElementById('authError').textContent = '';
         }
 
-        function submitAuth(e) {
+        async function submitAuth(e) {
             e.preventDefault();
             var username = document.getElementById('usernameInput').value.trim();
             var password = document.getElementById('passwordInput').value;
             var errorDiv = document.getElementById('authError');
             errorDiv.textContent = '';
             if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
-            fetch(isRegisterMode ? '/register' : '/login', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            }).then(r => r.json()).then(data => {
+            
+            try {
+                const response = await fetch(isRegisterMode ? '/register' : '/login', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                
                 if (data.success) {
                     currentUser = username;
                     localStorage.setItem('messenger_username', username);
+                    
+                    // Генерируем E2E ключи
+                    await generateKeyPair();
+                    
                     document.getElementById('authScreen').classList.add('hidden');
                     document.getElementById('app').classList.add('active');
                     connectWebSocket();
                 } else { errorDiv.textContent = data.message || 'Ошибка'; }
-            }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
+            } catch (err) { errorDiv.textContent = 'Ошибка соединения'; }
         }
 
         function logout() { 
@@ -997,11 +1184,16 @@
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             socket = new WebSocket(ws);
             socket.onopen = function() {
-                socket.send(JSON.stringify({ type: "register", username: currentUser }));
+                // Отправляем регистрацию с публичным ключом
+                socket.send(JSON.stringify({ 
+                    type: "register", 
+                    username: currentUser,
+                    public_key: publicKeyBase64
+                }));
                 loadGeneralHistory();
                 initPeer();
             };
-            socket.onmessage = function(event) {
+            socket.onmessage = async function(event) {
                 var data = JSON.parse(event.data);
                 if (data.type === "typing") {
                     document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
@@ -1009,14 +1201,35 @@
                     statusTimer = setTimeout(function() { document.getElementById('typingIndicator').textContent = ''; }, 2000);
                     return;
                 }
+                if (data.type === "user_list") {
+                    // Сохраняем публичные ключи пользователей
+                    if (data.users && Array.isArray(data.users)) {
+                        data.users.forEach(u => {
+                            if (u.username && u.public_key) {
+                                userPublicKeys[u.username] = u.public_key;
+                            }
+                        });
+                    }
+                    updateUserList(data.users.map ? data.users.map(u => u.username || u) : data.users);
+                    return;
+                }
                 if (data.type === "message" && currentChat === 'general')
                     addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 else if (data.type === "private") {
                     var partner = data.username === currentUser ? data.receiver : data.username;
-                    if (currentChat === partner) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
+                    if (currentChat === partner) {
+                        // Расшифровываем сообщение если оно зашифровано
+                        let text = data.text;
+                        if (data.encrypted && data.encrypted_key && data.iv) {
+                            const senderKey = userPublicKeys[data.username];
+                            if (senderKey) {
+                                text = await decryptMessage(data.encrypted, data.encrypted_key, data.iv, senderKey);
+                            }
+                        }
+                        addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
+                    }
                 } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id)
                     addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
-                else if (data.type === "user_list") updateUserList(data.users);
                 else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
             };
         }
@@ -1035,9 +1248,15 @@
             peer.on('error', function(err) { console.error('PeerJS error:', err); });
         }
 
-        window.onload = function() {
+        window.onload = async function() {
             var saved = localStorage.getItem('messenger_username');
-            if (saved) { currentUser = saved; document.getElementById('authScreen').classList.add('hidden'); document.getElementById('app').classList.add('active'); connectWebSocket(); }
+            if (saved) { 
+                currentUser = saved; 
+                await generateKeyPair(); // Генерируем ключи при авто-входе
+                document.getElementById('authScreen').classList.add('hidden'); 
+                document.getElementById('app').classList.add('active'); 
+                connectWebSocket(); 
+            }
         };
 
         function switchToGeneral() { 
@@ -1054,7 +1273,7 @@
         function switchToPrivate(u) { 
             currentChat = u; currentGroupID = 0;
             document.getElementById('chatHeaderName').textContent = u;
-            document.getElementById('chatHeaderStatus').textContent = 'В сети';
+            document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E';
             document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active'));
             event.currentTarget.classList.add('active');
             document.getElementById('chatMessages').innerHTML = '';
@@ -1078,7 +1297,24 @@
         }
 
         function loadGeneralHistory() { fetch('/history').then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
-        function loadPrivateHistory(p) { fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.sender, m.text, m.image, m.file_name, m.sender === currentUser)); }); }
+        
+        async function loadPrivateHistory(p) { 
+            const data = await fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json());
+            if (data) {
+                for (const m of data) {
+                    let text = m.text;
+                    // Расшифровываем если есть зашифрованные данные
+                    if (m.encrypted && m.encrypted_key && m.iv) {
+                        const senderKey = userPublicKeys[m.sender];
+                        if (senderKey) {
+                            text = await decryptMessage(m.encrypted, m.encrypted_key, m.iv, senderKey);
+                        }
+                    }
+                    addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true);
+                }
+            }
+        }
+        
         function loadGroupHistory(id) { fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
 
         function updateUserList(users) {
@@ -1088,16 +1324,17 @@
             others.forEach(function(u) {
                 var div = document.createElement('div');
                 div.className = 'chat-item';
-                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span></div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
+                const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
+                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
                 div.onclick = function() { switchToPrivate(u); };
                 list.appendChild(div);
             });
         }
 
-        function addMessageToUI(username, text, image, fileName, isOwn) {
+        function addMessageToUI(username, text, image, fileName, isOwn, isEncrypted = false) {
             var div = document.createElement('div');
-            div.className = 'message ' + (isOwn ? 'out' : 'in');
-            var content = '<div class="message-meta">' + username + '</div>';
+            div.className = 'message ' + (isOwn ? 'out' : 'in') + (isEncrypted ? ' encrypted' : '');
+            var content = '<div class="message-meta">' + username + (isEncrypted ? ' 🔒' : '') + '</div>';
             if (fileName) {
                 content += '<div class="message-file"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><div class="message-file-info"><div class="message-file-name">' + fileName + '</div><a href="' + image + '" download="' + fileName + '" class="message-file-download">Скачать</a></div></div>';
             } else if (image) {
@@ -1124,22 +1361,45 @@
             if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var reader = new FileReader();
-            reader.onload = function(e) {
+            reader.onload = async function(e) {
                 var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
                 if (currentChat==='general') msg.type='message';
                 else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-                else { msg.type='private'; msg.receiver=currentChat; }
+                else { 
+                    msg.type='private'; 
+                    msg.receiver=currentChat;
+                    // Шифруем файл если это личное сообщение
+                    const recipientKey = userPublicKeys[currentChat];
+                    if (recipientKey) {
+                        const encrypted = await encryptMessage(e.target.result, recipientKey);
+                        msg.encrypted = encrypted.encrypted;
+                        msg.encrypted_key = encrypted.encryptedKey;
+                        msg.iv = encrypted.iv;
+                    }
+                }
                 socket.send(JSON.stringify(msg));
             }; reader.readAsDataURL(file); event.target.value = '';
         }
 
-        function sendMessage() {
+        async function sendMessage() {
             var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var msg = { text: input.value };
             if (currentChat==='general') msg.type='message';
             else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-            else { msg.type='private'; msg.receiver=currentChat; }
+            else { 
+                msg.type='private'; 
+                msg.receiver=currentChat;
+                // Шифруем сообщение если есть публичный ключ получателя
+                const recipientKey = userPublicKeys[currentChat];
+                if (recipientKey) {
+                    const encrypted = await encryptMessage(input.value, recipientKey);
+                    msg.encrypted = encrypted.encrypted;
+                    msg.encrypted_key = encrypted.encryptedKey;
+                    msg.iv = encrypted.iv;
+                    msg.text = '[Зашифровано]'; // Сервер видит только это
+                }
+            }
             socket.send(JSON.stringify(msg)); input.value = '';
         }
 
