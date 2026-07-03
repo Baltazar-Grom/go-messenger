@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Go Мессенджер</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; height: 100vh; display: flex; justify-content: center; align-items: center; overflow: hidden; }
@@ -90,16 +91,6 @@
         .call-btn-end { background: #dc3545; }
         .call-btn-switch { background: #0084ff; }
         .call-btn-mute { background: #6c757d; }
-        .play-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8); display: flex; flex-direction: column;
-            justify-content: center; align-items: center; z-index: 25; cursor: pointer;
-        }
-        .play-overlay span { color: white; font-size: 18px; margin-bottom: 15px; }
-        .play-overlay button {
-            background: #0084ff; color: white; border: none; padding: 15px 30px;
-            border-radius: 25px; font-size: 16px; cursor: pointer;
-        }
         
         .hidden { display: none !important; }
         
@@ -150,7 +141,7 @@
             <div id="typing_status"></div>
             <div class="chat-input">
                 <input type="file" id="file_input" style="display:none" onchange="handleFileSelect(event)">
-                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить файл"></button>
+                <button class="btn-attach" onclick="document.getElementById('file_input').click()" title="Прикрепить файл">📎</button>
                 <input type="text" id="msg_input" placeholder="Напишите сообщение..." onkeypress="if(event.key==='Enter') sendMessage()" onkeyup="handleTyping()">
                 <button class="btn-send" onclick="sendMessage()">➤</button>
             </div>
@@ -176,19 +167,15 @@
 
     <div class="modal hidden" id="active_call_modal">
         <div class="call-modal">
-            <div class="video-container" id="video_container">
-                <video id="remote_video" class="remote-video" playsinline webkit-playsinline x5-playsinline></video>
-                <video id="local_video" class="local-video" playsinline webkit-playsinline x5-playsinline muted></video>
+            <div class="video-container">
+                <video id="remote_video" class="remote-video" autoplay playsinline></video>
+                <video id="local_video" class="local-video" autoplay playsinline muted></video>
                 <div class="call-status" id="call_status">Подключение...</div>
-                <div class="play-overlay hidden" id="play_overlay" onclick="manualPlay()">
-                    <span>Видео заблокировано браузером</span>
-                    <button>▶ Нажмите для воспроизведения</button>
-                </div>
             </div>
             <div class="call-controls">
-                <button class="call-btn call-btn-mute" onclick="toggleMute()" id="mute_btn" title="Микрофон">🎤</button>
-                <button class="call-btn call-btn-switch" onclick="switchCamera()" title="Камера">🔄</button>
-                <button class="call-btn call-btn-end" onclick="endCall()" title="Завершить"></button>
+                <button class="call-btn call-btn-mute" onclick="toggleMute()" id="mute_btn">🎤</button>
+                <button class="call-btn call-btn-switch" onclick="switchCamera()">🔄</button>
+                <button class="call-btn call-btn-end" onclick="endCall()">📞</button>
             </div>
         </div>
     </div>
@@ -198,21 +185,9 @@
         var currentUser = '', currentChat = 'general', currentGroupID = 0;
         var isRegisterMode = false;
         var statusDiv = document.getElementById('typing_status'), statusTimer;
-        let localStream, peerConnection, currentCallTarget = '';
-        let pendingCandidates = [], remoteStream = null;
+        let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false;
-        let remoteAttached = false, remoteVideoReady = false;
-        
-        const servers = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-                { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-                { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-            ]
-        };
+        let peer = null; // PeerJS peer
 
         function toggleAuthMode() {
             isRegisterMode = !isRegisterMode;
@@ -238,11 +213,50 @@
                     document.getElementById('login_screen').classList.add('hidden');
                     document.getElementById('app_container').classList.remove('hidden');
                     connectWebSocket();
+                    initPeer(); // Инициализируем PeerJS
                 } else { errorDiv.textContent = data.message || 'Ошибка'; }
             }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
         }
 
-        function logout() { localStorage.removeItem('messenger_username'); location.reload(); }
+        function logout() { 
+            if (peer) peer.destroy();
+            localStorage.removeItem('messenger_username'); 
+            location.reload(); 
+        }
+
+        // Инициализация PeerJS
+        function initPeer() {
+            // Создаём уникальный ID для пользователя
+            var peerId = 'messenger_' + currentUser + '_' + Date.now();
+            
+            peer = new Peer(peerId, {
+                debug: 2
+            });
+
+            peer.on('open', function(id) {
+                console.log('PeerJS ID:', id);
+                // Отправляем ID на сервер, чтобы другие могли найти нас
+                socket.send(JSON.stringify({ type: 'peer_id', peer_id: id }));
+            });
+
+            peer.on('call', function(call) {
+                // Входящий звонок
+                currentCall = call;
+                currentCallTarget = call.metadata.username;
+                document.getElementById('incoming_call_text').textContent = currentCallTarget + ' звонит вам...';
+                document.getElementById('incoming_call_modal').classList.remove('hidden');
+                
+                // Сохраняем звонок для принятия
+                window.pendingCall = call;
+            });
+
+            peer.on('error', function(err) {
+                console.error('PeerJS error:', err);
+                if (err.type === 'unavailable-id') {
+                    console.log('ID недоступен, создаём новый');
+                }
+            });
+        }
 
         function connectWebSocket() {
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
@@ -259,7 +273,12 @@
                     statusTimer = setTimeout(function() { statusDiv.textContent = ''; }, 2000);
                     return;
                 }
-                if (data.type === "webrtc") { handleWebRTCSignal(data); return; }
+                if (data.type === "peer_id") {
+                    // Сохраняем PeerJS ID пользователя
+                    if (!window.peerIds) window.peerIds = {};
+                    window.peerIds[data.username] = data.peer_id;
+                    return;
+                }
                 if (data.type === "message" && currentChat === 'general')
                     addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 else if (data.type === "private") {
@@ -274,7 +293,7 @@
 
         window.onload = function() {
             var saved = localStorage.getItem('messenger_username');
-            if (saved) { currentUser = saved; document.getElementById('login_screen').classList.add('hidden'); document.getElementById('app_container').classList.remove('hidden'); connectWebSocket(); }
+            if (saved) { currentUser = saved; document.getElementById('login_screen').classList.add('hidden'); document.getElementById('app_container').classList.remove('hidden'); connectWebSocket(); initPeer(); }
         };
 
         function switchToGeneral() { currentChat = 'general'; currentGroupID = 0; document.getElementById('chat_header').textContent = 'Общий чат'; document.querySelectorAll('.user-item,.group-item').forEach(e => e.classList.remove('active')); document.getElementById('user_item_general').classList.add('active'); messagesDiv.innerHTML = ''; loadGeneralHistory(); }
@@ -338,6 +357,8 @@
             socket.send(JSON.stringify(msg)); input.value = '';
         }
 
+        // ==================== ЗВОНКИ ЧЕРЕЗ PEERJS ====================
+
         async function getMedia(facing) {
             try { 
                 return await navigator.mediaDevices.getUserMedia({ 
@@ -354,144 +375,50 @@
             document.getElementById('call_status').textContent = text;
         }
 
-        function safePlay(videoEl) {
-            if (!videoEl || !videoEl.srcObject) return;
-            if (!videoEl.paused) return;
-            var playPromise = videoEl.play();
-            if (playPromise !== undefined) {
-                playPromise.catch(function(err) {
-                    console.warn('Play blocked:', err.name);
-                    videoEl.muted = true;
-                    videoEl.play().catch(function(err2) {
-                        console.error('Play completely blocked:', err2.name);
-                        document.getElementById('play_overlay').classList.remove('hidden');
-                        updateCallStatus('Нажмите для воспроизведения');
-                    });
-                });
-            }
-        }
-
-        function manualPlay() {
-            var rv = document.getElementById('remote_video');
-            rv.muted = false;
-            rv.play().then(function() {
-                document.getElementById('play_overlay').classList.add('hidden');
-                updateCallStatus('Подключено');
-            }).catch(function(err) {
-                rv.muted = true;
-                rv.play().then(function() {
-                    document.getElementById('play_overlay').classList.add('hidden');
-                    updateCallStatus('Подключено (без звука)');
-                });
-            });
-        }
-
-        async function setupPC() {
-            peerConnection = new RTCPeerConnection(servers);
-            pendingCandidates = [];
-            remoteStream = new MediaStream();
-            remoteAttached = false;
-            remoteVideoReady = false;
-
-            localStream.getTracks().forEach(function(track) {
-                peerConnection.addTrack(track, localStream);
-            });
-
-            peerConnection.onicecandidate = function(event) {
-                if (event.candidate && socket && socket.readyState === 1) {
-                    socket.send(JSON.stringify({ 
-                        type: 'webrtc', receiver: currentCallTarget, 
-                        payload: JSON.stringify({ type: 'ice_candidate', candidate: event.candidate }) 
-                    }));
-                }
-            };
-
-            peerConnection.ontrack = function(event) {
-                console.log('ontrack:', event.track.kind, 'readyState:', event.track.readyState);
-                remoteStream.addTrack(event.track);
-                
-                if (!remoteAttached) {
-                    remoteAttached = true;
-                    var rv = document.getElementById('remote_video');
-                    rv.srcObject = remoteStream;
-                    
-                    rv.onloadedmetadata = function() {
-                        console.log('Remote video metadata loaded');
-                        remoteVideoReady = true;
-                        safePlay(rv);
-                    };
-                    
-                    if (rv.readyState >= 1) {
-                        remoteVideoReady = true;
-                        safePlay(rv);
-                    }
-                }
-            };
-
-            peerConnection.onconnectionstatechange = function() {
-                console.log('PC state:', peerConnection.connectionState);
-                if (peerConnection && peerConnection.connectionState === 'connected') {
-                    updateCallStatus('Подключено');
-                } else if (peerConnection && peerConnection.connectionState === 'failed') {
-                    updateCallStatus('Ошибка соединения');
-                    setTimeout(function() { alert('Не удалось установить соединение'); endCall(); }, 1000);
-                }
-            };
-        }
-
         async function startCall(target, event) {
             if (event) event.stopPropagation();
-            currentCallTarget = target; currentFacingMode = 'user';
+            currentCallTarget = target;
+            currentFacingMode = 'user';
             updateCallStatus('Вызов...');
+
             try {
                 localStream = await getMedia(currentFacingMode);
-                var lv = document.getElementById('local_video');
-                lv.srcObject = localStream; 
-                lv.play().catch(function(){});
+                document.getElementById('local_video').srcObject = localStream;
                 document.getElementById('active_call_modal').classList.remove('hidden');
-                document.getElementById('play_overlay').classList.add('hidden');
 
-                await setupPC();
-                var offer = await peerConnection.createOffer({ 
-                    offerToReceiveAudio: true, 
-                    offerToReceiveVideo: true 
+                // Получаем PeerJS ID собеседника
+                var targetPeerId = window.peerIds[target];
+                if (!targetPeerId) {
+                    alert('Пользователь ' + target + ' не доступен для звонка');
+                    endCall();
+                    return;
+                }
+
+                // Звоним через PeerJS
+                currentCall = peer.call(targetPeerId, localStream, {
+                    metadata: { username: currentUser }
                 });
-                await peerConnection.setLocalDescription(offer);
-                socket.send(JSON.stringify({ 
-                    type: 'webrtc', receiver: currentCallTarget, 
-                    payload: JSON.stringify({ type: 'offer', sdp: offer }) 
-                }));
-            } catch(err) { 
-                alert('Ошибка камеры/микрофона: ' + err.message); 
-                endCall(); 
-            }
-        }
 
-        async function handleWebRTCSignal(data) {
-            var payload = JSON.parse(data.payload), sender = data.username;
-            if (payload.type === 'offer') {
-                currentCallTarget = sender;
-                document.getElementById('incoming_call_text').textContent = sender + ' звонит вам...';
-                document.getElementById('incoming_call_modal').classList.remove('hidden');
-                window.pendingOffer = payload.sdp;
-            } else if (payload.type === 'answer') {
-                if (peerConnection) {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-                    for (var i = 0; i < pendingCandidates.length; i++) { 
-                        try { await peerConnection.addIceCandidate(new RTCIceCandidate(pendingCandidates[i])); } 
-                        catch(e) { console.error('ICE error:', e); } 
-                    }
-                    pendingCandidates = [];
-                }
-            } else if (payload.type === 'ice_candidate') {
-                if (peerConnection && peerConnection.remoteDescription) { 
-                    try { await peerConnection.addIceCandidate(new RTCIceCandidate(payload.candidate)); } 
-                    catch(e) { console.error('ICE error:', e); } 
-                } else { 
-                    pendingCandidates.push(payload.candidate); 
-                }
-            } else if (payload.type === 'end_call') {
-                alert(sender + ' завершил звонок'); 
+                currentCall.on('stream', function(remoteStream) {
+                    console.log('Получен поток от собеседника');
+                    document.getElementById('remote_video').srcObject = remoteStream;
+                    updateCallStatus('Подключено');
+                });
+
+                currentCall.on('close', function() {
+                    console.log('Звонок завершён');
+                    alert(target + ' завершил звонок');
+                    endCall();
+                });
+
+                currentCall.on('error', function(err) {
+                    console.error('Ошибка звонка:', err);
+                    alert('Ошибка соединения');
+                    endCall();
+                });
+
+            } catch(err) {
+                alert('Ошибка камеры/микрофона: ' + err.message);
                 endCall();
             }
         }
@@ -500,38 +427,40 @@
             document.getElementById('incoming_call_modal').classList.add('hidden');
             currentFacingMode = 'user';
             updateCallStatus('Подключение...');
+
             try {
                 localStream = await getMedia(currentFacingMode);
-                var lv = document.getElementById('local_video');
-                lv.srcObject = localStream; 
-                lv.play().catch(function(){});
+                document.getElementById('local_video').srcObject = localStream;
                 document.getElementById('active_call_modal').classList.remove('hidden');
-                document.getElementById('play_overlay').classList.add('hidden');
 
-                await setupPC();
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(window.pendingOffer));
-                var answer = await peerConnection.createAnswer({ 
-                    offerToReceiveAudio: true, 
-                    offerToReceiveVideo: true 
+                // Принимаем звонок
+                currentCall = window.pendingCall;
+                currentCall.answer(localStream);
+
+                currentCall.on('stream', function(remoteStream) {
+                    console.log('Получен поток от собеседника');
+                    document.getElementById('remote_video').srcObject = remoteStream;
+                    updateCallStatus('Подключено');
                 });
-                await peerConnection.setLocalDescription(answer);
-                socket.send(JSON.stringify({ 
-                    type: 'webrtc', receiver: currentCallTarget, 
-                    payload: JSON.stringify({ type: 'answer', sdp: answer }) 
-                }));
-            } catch(err) { 
-                alert('Ошибка: ' + err.message); 
-                rejectCall(); 
+
+                currentCall.on('close', function() {
+                    console.log('Звонок завершён');
+                    endCall();
+                });
+
+            } catch(err) {
+                alert('Ошибка: ' + err.message);
+                rejectCall();
             }
         }
 
         async function switchCamera() {
-            if (!localStream || !peerConnection) return;
+            if (!localStream) return;
             currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
             try {
                 var ns = await getMedia(currentFacingMode);
                 var vt = ns.getVideoTracks()[0];
-                var sender = peerConnection.getSenders().find(function(s) { return s.track && s.track.kind === 'video'; });
+                var sender = currentCall.peerConnection.getSenders().find(function(s) { return s.track && s.track.kind === 'video'; });
                 if (sender) await sender.replaceTrack(vt);
                 localStream.getVideoTracks().forEach(function(t) { t.stop(); });
                 localStream = ns;
@@ -549,31 +478,20 @@
 
         function rejectCall() {
             document.getElementById('incoming_call_modal').classList.add('hidden');
-            if (socket && socket.readyState === 1)
-                socket.send(JSON.stringify({ 
-                    type: 'webrtc', receiver: currentCallTarget, 
-                    payload: JSON.stringify({ type: 'end_call' }) 
-                }));
+            if (window.pendingCall) {
+                window.pendingCall.close();
+                window.pendingCall = null;
+            }
         }
 
         function endCall() {
-            if (peerConnection) { peerConnection.close(); peerConnection = null; }
+            if (currentCall) { currentCall.close(); currentCall = null; }
             if (localStream) { localStream.getTracks().forEach(function(t){ t.stop(); }); localStream = null; }
             document.getElementById('active_call_modal').classList.add('hidden');
-            document.getElementById('play_overlay').classList.add('hidden');
             document.getElementById('local_video').srcObject = null;
             document.getElementById('remote_video').srcObject = null;
-            if (currentCallTarget && socket && socket.readyState === 1)
-                socket.send(JSON.stringify({ 
-                    type: 'webrtc', receiver: currentCallTarget, 
-                    payload: JSON.stringify({ type: 'end_call' }) 
-                }));
-            currentCallTarget = ''; 
-            pendingCandidates = []; 
-            remoteStream = null; 
+            currentCallTarget = '';
             isMuted = false;
-            remoteAttached = false;
-            remoteVideoReady = false;
         }
     </script>
 </body>
