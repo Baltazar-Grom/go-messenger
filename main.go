@@ -29,20 +29,20 @@ var mutex = &sync.Mutex{}
 var db *sql.DB
 
 type Message struct {
-	Type        string   `json:"type"`
-	Username    string   `json:"username"`
-	Text        string   `json:"text"`
-	Image       string   `json:"image,omitempty"`
-	FileName    string   `json:"file_name,omitempty"`
-	Payload     string   `json:"payload,omitempty"`
-	Users       []string `json:"users,omitempty"`
-	Receiver    string   `json:"receiver,omitempty"`
-	GroupID     int      `json:"group_id,omitempty"`
-	GroupName   string   `json:"group_name,omitempty"`
-	PublicKey   string   `json:"public_key,omitempty"` // Публичный ключ пользователя
-	Encrypted   string   `json:"encrypted,omitempty"`  // Зашифрованное сообщение
-	EncryptedKey string  `json:"encrypted_key,omitempty"` // Зашифрованный AES ключ
-	Iv          string   `json:"iv,omitempty"`         // Вектор инициализации
+	Type         string   `json:"type"`
+	Username     string   `json:"username"`
+	Text         string   `json:"text"`
+	Image        string   `json:"image,omitempty"`
+	FileName     string   `json:"file_name,omitempty"`
+	Payload      string   `json:"payload,omitempty"`
+	Users        []string `json:"users,omitempty"`
+	Receiver     string   `json:"receiver,omitempty"`
+	GroupID      int      `json:"group_id,omitempty"`
+	GroupName    string   `json:"group_name,omitempty"`
+	PublicKey    string   `json:"public_key,omitempty"`    // Публичный ключ пользователя
+	Encrypted    string   `json:"encrypted,omitempty"`     // Зашифрованное сообщение
+	EncryptedKey string   `json:"encrypted_key,omitempty"` // Зашифрованный AES ключ
+	Iv           string   `json:"iv,omitempty"`            // Вектор инициализации
 }
 
 type AuthRequest struct {
@@ -256,7 +256,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			handleGroupMessage(msg)
 		} else if msg.Type == "private" && msg.Receiver != "" {
 			// Сохраняем зашифрованное сообщение
-			db.Exec("INSERT INTO private_messages (sender, receiver, text, image, file_name, encrypted, encrypted_key, iv) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
+			db.Exec("INSERT INTO private_messages (sender, receiver, text, image, file_name, encrypted, encrypted_key, iv) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
 				username, msg.Receiver, msg.Text, msg.Image, msg.FileName, msg.Encrypted, msg.EncryptedKey, msg.Iv)
 			handlePrivateMessage(msg)
 		} else {
@@ -322,7 +322,7 @@ func handleGroupMessage(msg Message) {
 func sendUserList() {
 	mutex.Lock()
 	defer mutex.Unlock()
-	
+
 	// Собираем пользователей с их публичными ключами
 	type UserWithKey struct {
 		Username  string `json:"username"`
@@ -335,14 +335,13 @@ func sendUserList() {
 			PublicKey: client.PublicKey,
 		})
 	}
-	
-	msg := Message{Type: "user_list"}
+
 	// Сериализуем вручную для передачи ключей
 	jsonData, _ := json.Marshal(map[string]interface{}{
 		"type":  "user_list",
 		"users": usersWithKeys,
 	})
-	
+
 	for conn := range clients {
 		conn.WriteMessage(websocket.TextMessage, jsonData)
 	}
