@@ -38,6 +38,7 @@ type Message struct {
 	Users     []string `json:"users,omitempty"`
 	Receiver  string   `json:"receiver,omitempty"`
 	GroupID   int      `json:"group_id,omitempty"`
+	GroupName string   `json:"group_name,omitempty"`
 	PublicKey string   `json:"public_key,omitempty"`
 	Encrypted string   `json:"encrypted,omitempty"`
 	Nonce     string   `json:"nonce,omitempty"`
