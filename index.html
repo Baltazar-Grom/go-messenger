@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Go Мессенджер (E2E)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tweetnacl/1.0.3/nacl.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -73,7 +74,7 @@
         .message-file-download { color: var(--primary); text-decoration: none; font-size: 13px; }
         .message.system { align-self: center; background: rgba(0,0,0,0.05); color: var(--text-secondary); font-style: italic; max-width: 80%; }
         .message.encrypted { border: 1px solid var(--success); }
-        .message.encrypted::after { content: ''; position: absolute; top: -8px; right: -8px; background: var(--success); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+        .message.encrypted::after { content: '🔒'; position: absolute; top: -8px; right: -8px; background: var(--success); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
         .typing-indicator { padding: 0 20px; color: var(--text-secondary); font-size: 14px; font-style: italic; min-height: 20px; }
         .chat-input-container { padding: 15px 20px; background: var(--bg); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
         .chat-input { flex: 1; padding: 12px 16px; border: 1px solid var(--border); border-radius: 20px; font-size: 15px; outline: none; transition: border-color 0.3s; }
@@ -235,55 +236,69 @@
         var isRegisterMode = false, statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false, peer = null;
-        let privateKey = null, publicKey = null, publicKeyBase64 = null;
+        
+        // E2E через TweetNaCl
+        let myKeyPair = null;
+        let myPublicKeyBase64 = null;
         let userPublicKeys = {};
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
-        function arrayBufferToBase64(buffer) {
-            let binary = '', bytes = new Uint8Array(buffer);
-            for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+        // ==================== E2E CRYPTO (TweetNaCl) ====================
+        
+        // Конвертация Uint8Array <-> Base64
+        function uint8ToBase64(arr) {
+            let binary = '';
+            for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
             return btoa(binary);
         }
-        function base64ToArrayBuffer(base64) {
-            let binaryString = atob(base64), bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-            return bytes.buffer;
+        function base64ToUint8(base64) {
+            let binary = atob(base64);
+            let arr = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i);
+            return arr;
         }
 
-        async function generateKeyPair() {
-            const keyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits', 'deriveKey']);
-            privateKey = keyPair.privateKey;
-            publicKey = keyPair.publicKey;
-            const exported = await crypto.subtle.exportKey('spki', publicKey);
-            publicKeyBase64 = arrayBufferToBase64(exported);
-            console.log('E2E ключи сгенерированы');
+        // Генерация пары ключей Curve25519
+        function generateKeyPair() {
+            myKeyPair = nacl.box.keyPair();
+            myPublicKeyBase64 = uint8ToBase64(myKeyPair.publicKey);
+            console.log('E2E ключи сгенерированы (TweetNaCl)');
+            console.log('Публичный ключ:', myPublicKeyBase64);
         }
 
-        async function importPublicKey(base64Key) {
-            return await crypto.subtle.importKey('spki', base64ToArrayBuffer(base64Key), { name: 'ECDH', namedCurve: 'P-256' }, true, []);
+        // Шифрование сообщения для получателя
+        function encryptMessage(text, recipientPublicKeyBase64) {
+            const recipientPublicKey = base64ToUint8(recipientPublicKeyBase64);
+            const messageBytes = new TextEncoder().encode(text);
+            const nonce = nacl.randomBytes(24);
+            const encrypted = nacl.box(messageBytes, nonce, recipientPublicKey, myKeyPair.secretKey);
+            
+            if (!encrypted) {
+                console.error('Шифрование не удалось!');
+                return null;
+            }
+            
+            return {
+                encrypted: uint8ToBase64(encrypted),
+                nonce: uint8ToBase64(nonce)
+            };
         }
 
-        async function deriveSharedKey(myPrivateKey, otherPublicKey) {
-            const sharedBits = await crypto.subtle.deriveBits({ name: 'ECDH', public: otherPublicKey }, myPrivateKey, 256);
-            return await crypto.subtle.importKey('raw', sharedBits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-        }
-
-        async function encryptMessage(text, recipientPublicKeyBase64) {
-            const recipientPublicKey = await importPublicKey(recipientPublicKeyBase64);
-            const sharedKey = await deriveSharedKey(privateKey, recipientPublicKey);
-            const iv = crypto.getRandomValues(new Uint8Array(12));
-            const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, sharedKey, new TextEncoder().encode(text));
-            return { encrypted: arrayBufferToBase64(encrypted), iv: arrayBufferToBase64(iv) };
-        }
-
-        async function decryptMessage(encryptedBase64, ivBase64, senderPublicKeyBase64) {
+        // Расшифровка сообщения от отправителя
+        function decryptMessage(encryptedBase64, nonceBase64, senderPublicKeyBase64) {
             try {
-                const senderPublicKey = await importPublicKey(senderPublicKeyBase64);
-                const sharedKey = await deriveSharedKey(privateKey, senderPublicKey);
-                const iv = new Uint8Array(base64ToArrayBuffer(ivBase64));
-                const encrypted = base64ToArrayBuffer(encryptedBase64);
-                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, sharedKey, encrypted);
+                const senderPublicKey = base64ToUint8(senderPublicKeyBase64);
+                const encrypted = base64ToUint8(encryptedBase64);
+                const nonce = base64ToUint8(nonceBase64);
+                
+                const decrypted = nacl.box.open(encrypted, nonce, senderPublicKey, myKeyPair.secretKey);
+                
+                if (!decrypted) {
+                    console.error('Расшифровка не удалась (null результат)');
+                    return '[Ошибка расшифровки]';
+                }
+                
                 return new TextDecoder().decode(decrypted);
             } catch (err) {
                 console.error('Ошибка расшифровки:', err);
@@ -291,6 +306,7 @@
             }
         }
 
+        // ==================== AUTH & WS ====================
         function toggleAuthMode() {
             isRegisterMode = !isRegisterMode;
             document.getElementById('authBtnText').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
@@ -299,25 +315,26 @@
             document.getElementById('authError').textContent = '';
         }
 
-        async function submitAuth(e) {
+        function submitAuth(e) {
             e.preventDefault();
             var username = document.getElementById('usernameInput').value.trim();
             var password = document.getElementById('passwordInput').value;
             var errorDiv = document.getElementById('authError');
             errorDiv.textContent = '';
             if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
-            try {
-                const response = await fetch(isRegisterMode ? '/register' : '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
-                const data = await response.json();
+            fetch(isRegisterMode ? '/register' : '/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            }).then(r => r.json()).then(data => {
                 if (data.success) {
                     currentUser = username;
                     localStorage.setItem('messenger_username', username);
-                    await generateKeyPair();
+                    generateKeyPair();
                     document.getElementById('authScreen').classList.add('hidden');
                     document.getElementById('app').classList.add('active');
                     connectWebSocket();
                 } else { errorDiv.textContent = data.message || 'Ошибка'; }
-            } catch (err) { errorDiv.textContent = 'Ошибка соединения'; }
+            }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
         }
 
         function logout() { if (peer) peer.destroy(); localStorage.removeItem('messenger_username'); location.reload(); }
@@ -326,11 +343,11 @@
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             socket = new WebSocket(ws);
             socket.onopen = function() {
-                socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: publicKeyBase64 }));
+                socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: myPublicKeyBase64 }));
                 loadGeneralHistory();
                 initPeer();
             };
-            socket.onmessage = async function(event) {
+            socket.onmessage = function(event) {
                 var data = JSON.parse(event.data);
                 if (data.type === "typing") {
                     document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
@@ -350,9 +367,11 @@
                     var partner = data.username === currentUser ? data.receiver : data.username;
                     if (currentChat === partner) {
                         let text = data.text;
-                        if (data.encrypted && data.iv) {
+                        if (data.encrypted && data.nonce) {
                             const senderKey = userPublicKeys[data.username];
-                            if (senderKey) text = await decryptMessage(data.encrypted, data.iv, senderKey);
+                            if (senderKey) {
+                                text = decryptMessage(data.encrypted, data.nonce, senderKey);
+                            }
                         }
                         addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
                     }
@@ -374,18 +393,32 @@
             peer.on('error', err => console.error('PeerJS error:', err));
         }
 
-        window.onload = async function() {
+        window.onload = function() {
             var saved = localStorage.getItem('messenger_username');
-            if (saved) { currentUser = saved; await generateKeyPair(); document.getElementById('authScreen').classList.add('hidden'); document.getElementById('app').classList.add('active'); connectWebSocket(); }
+            if (saved) { currentUser = saved; generateKeyPair(); document.getElementById('authScreen').classList.add('hidden'); document.getElementById('app').classList.add('active'); connectWebSocket(); }
         };
 
+        // ==================== UI & CHATS ====================
         function switchToGeneral() { currentChat = 'general'; currentGroupID = 0; document.getElementById('chatHeaderName').textContent = 'Общий чат'; document.getElementById('chatHeaderStatus').textContent = 'Все участники'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); document.getElementById('generalChat').classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadGeneralHistory(); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
         function switchToPrivate(u) { currentChat = u; currentGroupID = 0; document.getElementById('chatHeaderName').textContent = u; document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadPrivateHistory(u); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
         function switchToGroup(id, name) { currentChat = 'group'; currentGroupID = id; document.getElementById('chatHeaderName').textContent = name; document.getElementById('chatHeaderStatus').textContent = 'Групповой чат'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadGroupHistory(id); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
         function backToList() { document.getElementById('chatArea').classList.remove('active'); }
 
         function loadGeneralHistory() { fetch('/history').then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
-        async function loadPrivateHistory(p) { const data = await fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()); if (data) { for (const m of data) { let text = m.text; if (m.encrypted && m.iv) { const senderKey = userPublicKeys[m.sender]; if (senderKey) text = await decryptMessage(m.encrypted, m.iv, senderKey); } addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true); } } }
+        function loadPrivateHistory(p) { 
+            fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json()).then(data => { 
+                if (data) { 
+                    for (const m of data) { 
+                        let text = m.text; 
+                        if (m.encrypted && m.nonce) { 
+                            const senderKey = userPublicKeys[m.sender]; 
+                            if (senderKey) text = decryptMessage(m.encrypted, m.nonce, senderKey); 
+                        } 
+                        addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true); 
+                    } 
+                } 
+            }); 
+        }
         function loadGroupHistory(id) { fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
 
         function updateUserList(users) {
@@ -415,22 +448,36 @@
             if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var reader = new FileReader();
-            reader.onload = async function(e) {
+            reader.onload = function(e) {
                 var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
                 if (currentChat==='general') msg.type='message';
                 else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-                else { msg.type='private'; msg.receiver=currentChat; const recipientKey = userPublicKeys[currentChat]; if (recipientKey) { const encrypted = await encryptMessage(e.target.result, recipientKey); msg.encrypted = encrypted.encrypted; msg.iv = encrypted.iv; } }
+                else { 
+                    msg.type='private'; msg.receiver=currentChat; 
+                    const recipientKey = userPublicKeys[currentChat]; 
+                    if (recipientKey) { 
+                        const enc = encryptMessage(e.target.result, recipientKey); 
+                        if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; } 
+                    } 
+                }
                 socket.send(JSON.stringify(msg));
             }; reader.readAsDataURL(file); event.target.value = '';
         }
 
-        async function sendMessage() {
+        function sendMessage() {
             var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
             if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
             var msg = { text: input.value };
             if (currentChat==='general') msg.type='message';
             else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-            else { msg.type='private'; msg.receiver=currentChat; const recipientKey = userPublicKeys[currentChat]; if (recipientKey) { const encrypted = await encryptMessage(input.value, recipientKey); msg.encrypted = encrypted.encrypted; msg.iv = encrypted.iv; msg.text = '[Зашифровано]'; } }
+            else { 
+                msg.type='private'; msg.receiver=currentChat; 
+                const recipientKey = userPublicKeys[currentChat]; 
+                if (recipientKey) { 
+                    const enc = encryptMessage(input.value, recipientKey); 
+                    if (enc) { msg.encrypted = enc.encrypted; msg.nonce = enc.nonce; msg.text = '[Зашифровано]'; } 
+                } 
+            }
             socket.send(JSON.stringify(msg)); input.value = '';
         }
 
@@ -438,6 +485,7 @@
         function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
         function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) hideCreateGroupModal(); else alert(d.message||'Ошибка'); }); }
 
+        // ==================== CALLS ====================
         async function getMedia(facing) { try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } } }
         function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
 
