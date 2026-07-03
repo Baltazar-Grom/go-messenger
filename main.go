@@ -144,7 +144,7 @@ func createGroupHandler(w http.ResponseWriter, r *http.Request) {
 
 func groupsHandler(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
-	rows, _ := db.Query(`SELECT g.id, g.name FROM groups g JOIN group_members gm ON g.id = gm.group_id WHERE gm.username = ?`, username)
+	rows, _ := db.Query("SELECT g.id, g.name FROM groups g JOIN group_members gm ON g.id = gm.group_id WHERE gm.username = ?", username)
 	defer rows.Close()
 	var groups []map[string]interface{}
 	for rows.Next() {
@@ -158,7 +158,7 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 
 func availableGroupsHandler(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
-	rows, _ := db.Query(`SELECT g.id, g.name FROM groups g WHERE g.id NOT IN (SELECT group_id FROM group_members WHERE username = ?)`, username)
+	rows, _ := db.Query("SELECT g.id, g.name FROM groups g WHERE g.id NOT IN (SELECT group_id FROM group_members WHERE username = ?)", username)
 	defer rows.Close()
 	var groups []map[string]interface{}
 	for rows.Next() {
@@ -183,7 +183,7 @@ func joinGroupHandler(w http.ResponseWriter, r *http.Request) {
 
 func groupHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	groupID := r.URL.Query().Get("group_id")
-	rows, _ := db.Query(`SELECT username, text, image, file_name FROM group_messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT 50`, groupID)
+	rows, _ := db.Query("SELECT username, text, image, file_name FROM group_messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT 50", groupID)
 	defer rows.Close()
 	var history []map[string]interface{}
 	for rows.Next() {
@@ -368,7 +368,7 @@ func historyHandler(w http.ResponseWriter, r *http.Request) {
 func privateHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	user1 := r.URL.Query().Get("user1")
 	user2 := r.URL.Query().Get("user2")
-	rows, err := db.Query(`SELECT sender, text, image, file_name, encrypted, iv FROM private_messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY timestamp DESC LIMIT 50`, user1, user2, user2, user1)
+	rows, err := db.Query("SELECT sender, text, image, file_name, encrypted, iv FROM private_messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY timestamp DESC LIMIT 50", user1, user2, user2, user1)
 	if err != nil {
 		json.NewEncoder(w).Encode([]map[string]interface{}{})
 		return

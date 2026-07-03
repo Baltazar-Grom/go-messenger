@@ -14,8 +14,6 @@
             --message-in: #ffffff; --hover: #f0f0f0; --success: #4caf50; --danger: #e74c3c;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-secondary); height: 100vh; overflow: hidden; color: var(--text); }
-        
-        /* Auth Screen */
         .auth-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .auth-container { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); width: 90%; max-width: 400px; animation: slideUp 0.4s ease; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -30,8 +28,6 @@
         .auth-toggle { text-align: center; margin-top: 20px; color: var(--text-secondary); }
         .auth-toggle a { color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
         .auth-error { color: var(--danger); text-align: center; margin-top: 15px; font-size: 14px; min-height: 20px; }
-
-        /* App Layout */
         .app { display: none; height: 100vh; width: 100%; }
         .app.active { display: flex; }
         .sidebar { width: 350px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
@@ -55,8 +51,6 @@
         .call-btn-small { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .call-btn-small:hover { transform: scale(1.1); }
         .call-btn-small svg { width: 18px; height: 18px; fill: white; }
-
-        /* Chat Area */
         .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-secondary); }
         .chat-header { padding: 15px 20px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 15px; }
         .back-btn { display: none; }
@@ -79,7 +73,7 @@
         .message-file-download { color: var(--primary); text-decoration: none; font-size: 13px; }
         .message.system { align-self: center; background: rgba(0,0,0,0.05); color: var(--text-secondary); font-style: italic; max-width: 80%; }
         .message.encrypted { border: 1px solid var(--success); }
-        .message.encrypted::after { content: '🔒'; position: absolute; top: -8px; right: -8px; background: var(--success); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+        .message.encrypted::after { content: ''; position: absolute; top: -8px; right: -8px; background: var(--success); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; }
         .typing-indicator { padding: 0 20px; color: var(--text-secondary); font-size: 14px; font-style: italic; min-height: 20px; }
         .chat-input-container { padding: 15px 20px; background: var(--bg); border-top: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
         .chat-input { flex: 1; padding: 12px 16px; border: 1px solid var(--border); border-radius: 20px; font-size: 15px; outline: none; transition: border-color 0.3s; }
@@ -87,7 +81,6 @@
         .send-btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .send-btn:hover { background: var(--primary-dark); transform: scale(1.05); }
         .send-btn svg { width: 20px; height: 20px; fill: white; }
-
         @media (max-width: 768px) {
             .sidebar { width: 100%; }
             .chat-area { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
@@ -95,8 +88,6 @@
             .back-btn { display: flex; }
             .message { max-width: 85%; }
         }
-
-        /* Modals & Call */
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
         .modal.active { display: flex; }
         .modal-content { background: white; padding: 30px; border-radius: 15px; width: 90%; max-width: 400px; animation: slideUp 0.3s ease; }
@@ -107,7 +98,6 @@
         .modal-btn:hover { transform: translateY(-2px); }
         .modal-btn.primary { background: var(--primary); color: white; }
         .modal-btn.secondary { background: var(--bg-secondary); color: var(--text); }
-
         .call-screen { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; display: none; flex-direction: column; z-index: 3000; overflow: hidden; }
         .call-screen.active { display: flex; }
         .call-video-container { flex: 1; position: relative; width: 100%; height: 100%; overflow: hidden; }
@@ -121,7 +111,6 @@
         .call-control-btn.end { background: var(--danger); }
         .call-control-btn.mute { background: #7f8c8d; }
         .call-control-btn.switch { background: var(--primary); }
-
         .incoming-call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 4000; backdrop-filter: blur(5px); }
         .incoming-call-modal.active { display: flex; }
         .incoming-call-content { background: white; padding: 40px; border-radius: 20px; width: 90%; max-width: 380px; text-align: center; animation: slideUp 0.4s ease; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
@@ -140,7 +129,6 @@
     </style>
 </head>
 <body>
-    <!-- Auth Screen -->
     <div class="auth-screen" id="authScreen">
         <div class="auth-container">
             <div class="auth-logo">
@@ -163,7 +151,6 @@
         </div>
     </div>
 
-    <!-- App -->
     <div class="app" id="app">
         <div class="sidebar">
             <div class="sidebar-header">
@@ -201,7 +188,6 @@
         </div>
     </div>
 
-    <!-- Modals -->
     <div class="modal" id="createGroupModal">
         <div class="modal-content">
             <h3>Создать группу</h3>
@@ -249,14 +235,11 @@
         var isRegisterMode = false, statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false, peer = null;
-        
-        // E2E
         let privateKey = null, publicKey = null, publicKeyBase64 = null;
         let userPublicKeys = {};
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
-        // ==================== E2E CRYPTO ====================
         function arrayBufferToBase64(buffer) {
             let binary = '', bytes = new Uint8Array(buffer);
             for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
@@ -282,7 +265,7 @@
         }
 
         async function deriveSharedKey(myPrivateKey, otherPublicKey) {
-            const sharedBits = await crypto.subtle.deriveBits({ name: 'ECDH', public: otherPublicKey, namedCurve: 'P-256' }, myPrivateKey, 256);
+            const sharedBits = await crypto.subtle.deriveBits({ name: 'ECDH', public: otherPublicKey }, myPrivateKey, 256);
             return await crypto.subtle.importKey('raw', sharedBits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
         }
 
@@ -298,7 +281,9 @@
             try {
                 const senderPublicKey = await importPublicKey(senderPublicKeyBase64);
                 const sharedKey = await deriveSharedKey(privateKey, senderPublicKey);
-                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: new Uint8Array(base64ToArrayBuffer(ivBase64)) }, sharedKey, base64ToArrayBuffer(encryptedBase64));
+                const iv = new Uint8Array(base64ToArrayBuffer(ivBase64));
+                const encrypted = base64ToArrayBuffer(encryptedBase64);
+                const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, sharedKey, encrypted);
                 return new TextDecoder().decode(decrypted);
             } catch (err) {
                 console.error('Ошибка расшифровки:', err);
@@ -306,7 +291,6 @@
             }
         }
 
-        // ==================== AUTH & WS ====================
         function toggleAuthMode() {
             isRegisterMode = !isRegisterMode;
             document.getElementById('authBtnText').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
@@ -395,7 +379,6 @@
             if (saved) { currentUser = saved; await generateKeyPair(); document.getElementById('authScreen').classList.add('hidden'); document.getElementById('app').classList.add('active'); connectWebSocket(); }
         };
 
-        // ==================== UI & CHATS ====================
         function switchToGeneral() { currentChat = 'general'; currentGroupID = 0; document.getElementById('chatHeaderName').textContent = 'Общий чат'; document.getElementById('chatHeaderStatus').textContent = 'Все участники'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); document.getElementById('generalChat').classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadGeneralHistory(); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
         function switchToPrivate(u) { currentChat = u; currentGroupID = 0; document.getElementById('chatHeaderName').textContent = u; document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadPrivateHistory(u); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
         function switchToGroup(id, name) { currentChat = 'group'; currentGroupID = id; document.getElementById('chatHeaderName').textContent = name; document.getElementById('chatHeaderStatus').textContent = 'Групповой чат'; document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById('chatMessages').innerHTML = ''; loadGroupHistory(id); if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active'); }
@@ -410,7 +393,7 @@
             var others = users.filter(u => u !== currentUser);
             others.forEach(function(u) {
                 var div = document.createElement('div'); div.className = 'chat-item';
-                const hasKey = userPublicKeys[u] ? '<span class="e2e-badge"></span>' : '';
+                const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
                 div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
                 div.onclick = function() { switchToPrivate(u); }; list.appendChild(div);
             });
@@ -455,7 +438,6 @@
         function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
         function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) hideCreateGroupModal(); else alert(d.message||'Ошибка'); }); }
 
-        // ==================== CALLS ====================
         async function getMedia(facing) { try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } } }
         function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
 
