@@ -15,6 +15,7 @@
             --message-in: #ffffff; --hover: #f0f0f0; --success: #4caf50; --danger: #e74c3c;
         }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg-secondary); height: 100vh; overflow: hidden; color: var(--text); }
+        
         .auth-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .auth-container { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); width: 90%; max-width: 400px; animation: slideUp 0.4s ease; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -29,6 +30,7 @@
         .auth-toggle { text-align: center; margin-top: 20px; color: var(--text-secondary); }
         .auth-toggle a { color: var(--primary); text-decoration: none; font-weight: 600; cursor: pointer; }
         .auth-error { color: var(--danger); text-align: center; margin-top: 15px; font-size: 14px; min-height: 20px; }
+
         .app { display: none; height: 100vh; width: 100%; }
         .app.active { display: flex; }
         .sidebar { width: 350px; background: var(--bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
@@ -52,6 +54,7 @@
         .call-btn-small { width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .call-btn-small:hover { transform: scale(1.1); }
         .call-btn-small svg { width: 18px; height: 18px; fill: white; }
+
         .chat-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-secondary); }
         .chat-header { padding: 15px 20px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 15px; }
         .back-btn { display: none; }
@@ -82,6 +85,7 @@
         .send-btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--primary); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; }
         .send-btn:hover { background: var(--primary-dark); transform: scale(1.05); }
         .send-btn svg { width: 20px; height: 20px; fill: white; }
+
         @media (max-width: 768px) {
             .sidebar { width: 100%; }
             .chat-area { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100; display: none; }
@@ -89,6 +93,7 @@
             .back-btn { display: flex; }
             .message { max-width: 85%; }
         }
+
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
         .modal.active { display: flex; }
         .modal-content { background: white; padding: 30px; border-radius: 15px; width: 90%; max-width: 400px; animation: slideUp 0.3s ease; }
@@ -99,6 +104,7 @@
         .modal-btn:hover { transform: translateY(-2px); }
         .modal-btn.primary { background: var(--primary); color: white; }
         .modal-btn.secondary { background: var(--bg-secondary); color: var(--text); }
+
         .call-screen { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #000; display: none; flex-direction: column; z-index: 3000; overflow: hidden; }
         .call-screen.active { display: flex; }
         .call-video-container { flex: 1; position: relative; width: 100%; height: 100%; overflow: hidden; }
@@ -112,6 +118,7 @@
         .call-control-btn.end { background: var(--danger); }
         .call-control-btn.mute { background: #7f8c8d; }
         .call-control-btn.switch { background: var(--primary); }
+
         .incoming-call-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: none; justify-content: center; align-items: center; z-index: 4000; backdrop-filter: blur(5px); }
         .incoming-call-modal.active { display: flex; }
         .incoming-call-content { background: white; padding: 40px; border-radius: 20px; width: 90%; max-width: 380px; text-align: center; animation: slideUp 0.4s ease; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
@@ -241,12 +248,12 @@
         let myKeyPair = null;
         let myPublicKeyBase64 = null;
         let userPublicKeys = {};
+        let keysLoaded = false; // Флаг, что ключи загружены и можно грузить историю
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
         // ==================== E2E CRYPTO (TweetNaCl) ====================
         
-        // Конвертация Uint8Array <-> Base64
         function uint8ToBase64(arr) {
             let binary = '';
             for (let i = 0; i < arr.length; i++) binary += String.fromCharCode(arr[i]);
@@ -259,49 +266,67 @@
             return arr;
         }
 
-        // Генерация пары ключей Curve25519
         function generateKeyPair() {
-            myKeyPair = nacl.box.keyPair();
-            myPublicKeyBase64 = uint8ToBase64(myKeyPair.publicKey);
-            console.log('E2E ключи сгенерированы (TweetNaCl)');
+            const storageKey = 'e2e_keypair_' + currentUser;
+            const savedKeys = localStorage.getItem(storageKey);
+
+            if (savedKeys) {
+                try {
+                    const parsed = JSON.parse(savedKeys);
+                    myKeyPair = {
+                        publicKey: base64ToUint8(parsed.publicKey),
+                        secretKey: base64ToUint8(parsed.secretKey)
+                    };
+                    myPublicKeyBase64 = parsed.publicKey;
+                    console.log('✅ E2E ключи загружены из localStorage');
+                } catch(e) {
+                    console.warn('Ошибка загрузки ключей, генерируем новые:', e);
+                    localStorage.removeItem(storageKey);
+                    generateKeyPair();
+                }
+            } else {
+                myKeyPair = nacl.box.keyPair();
+                myPublicKeyBase64 = uint8ToBase64(myKeyPair.publicKey);
+                localStorage.setItem(storageKey, JSON.stringify({
+                    publicKey: myPublicKeyBase64,
+                    secretKey: uint8ToBase64(myKeyPair.secretKey)
+                }));
+                console.log('🔑 E2E ключи сгенерированы и сохранены');
+            }
             console.log('Публичный ключ:', myPublicKeyBase64);
         }
 
-        // Шифрование сообщения для получателя
         function encryptMessage(text, recipientPublicKeyBase64) {
-            const recipientPublicKey = base64ToUint8(recipientPublicKeyBase64);
-            const messageBytes = new TextEncoder().encode(text);
-            const nonce = nacl.randomBytes(24);
-            const encrypted = nacl.box(messageBytes, nonce, recipientPublicKey, myKeyPair.secretKey);
-            
-            if (!encrypted) {
-                console.error('Шифрование не удалось!');
+            try {
+                const recipientPublicKey = base64ToUint8(recipientPublicKeyBase64);
+                const messageBytes = new TextEncoder().encode(text);
+                const nonce = nacl.randomBytes(24);
+                const encrypted = nacl.box(messageBytes, nonce, recipientPublicKey, myKeyPair.secretKey);
+                if (!encrypted) throw new Error('Шифрование вернуло null');
+                return { encrypted: uint8ToBase64(encrypted), nonce: uint8ToBase64(nonce) };
+            } catch(err) {
+                console.error('❌ Ошибка шифрования:', err);
                 return null;
             }
-            
-            return {
-                encrypted: uint8ToBase64(encrypted),
-                nonce: uint8ToBase64(nonce)
-            };
         }
 
-        // Расшифровка сообщения от отправителя
         function decryptMessage(encryptedBase64, nonceBase64, senderPublicKeyBase64) {
             try {
+                if (!senderPublicKeyBase64) {
+                    return '[Ожидание ключей...]';
+                }
                 const senderPublicKey = base64ToUint8(senderPublicKeyBase64);
                 const encrypted = base64ToUint8(encryptedBase64);
                 const nonce = base64ToUint8(nonceBase64);
-                
+
                 const decrypted = nacl.box.open(encrypted, nonce, senderPublicKey, myKeyPair.secretKey);
-                
                 if (!decrypted) {
-                    console.error('Расшифровка не удалась (null результат)');
+                    console.error('❌ Расшифровка не удалась');
                     return '[Ошибка расшифровки]';
                 }
-                
                 return new TextDecoder().decode(decrypted);
             } catch (err) {
-                console.error('Ошибка расшифровки:', err);
+                console.error('❌ Ошибка расшифровки:', err);
                 return '[Ошибка расшифровки]';
             }
         }
@@ -337,14 +362,18 @@
             }).catch(() => { errorDiv.textContent = 'Ошибка соединения'; });
         }
 
-        function logout() { if (peer) peer.destroy(); localStorage.removeItem('messenger_username'); location.reload(); }
+        function logout() { 
+            if (peer) peer.destroy();
+            localStorage.removeItem('messenger_username');
+            localStorage.removeItem('e2e_keypair_' + currentUser);
+            location.reload(); 
+        }
 
         function connectWebSocket() {
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             socket = new WebSocket(ws);
             socket.onopen = function() {
                 socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: myPublicKeyBase64 }));
-                loadGeneralHistory();
                 initPeer();
             };
             socket.onmessage = function(event) {
@@ -359,6 +388,10 @@
                     if (data.users && Array.isArray(data.users)) {
                         data.users.forEach(u => { if (u.username && u.public_key) userPublicKeys[u.username] = u.public_key; });
                         updateUserList(data.users.map(u => u.username));
+                        // Ключи получены, теперь безопасно грузим историю
+                        keysLoaded = true;
+                        loadGeneralHistory();
+                        if (currentChat !== 'general') loadPrivateHistory(currentChat);
                     }
                     return;
                 }
@@ -369,9 +402,7 @@
                         let text = data.text;
                         if (data.encrypted && data.nonce) {
                             const senderKey = userPublicKeys[data.username];
-                            if (senderKey) {
-                                text = decryptMessage(data.encrypted, data.nonce, senderKey);
-                            }
+                            if (senderKey) text = decryptMessage(data.encrypted, data.nonce, senderKey);
                         }
                         addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
                     }
@@ -395,7 +426,13 @@
 
         window.onload = function() {
             var saved = localStorage.getItem('messenger_username');
-            if (saved) { currentUser = saved; generateKeyPair(); document.getElementById('authScreen').classList.add('hidden'); document.getElementById('app').classList.add('active'); connectWebSocket(); }
+            if (saved) { 
+                currentUser = saved; 
+                generateKeyPair();
+                document.getElementById('authScreen').classList.add('hidden'); 
+                document.getElementById('app').classList.add('active'); 
+                connectWebSocket(); 
+            }
         };
 
         // ==================== UI & CHATS ====================
@@ -413,6 +450,7 @@
                         if (m.encrypted && m.nonce) { 
                             const senderKey = userPublicKeys[m.sender]; 
                             if (senderKey) text = decryptMessage(m.encrypted, m.nonce, senderKey); 
+                            else text = '[Ключ отправителя ещё не получен]';
                         } 
                         addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true); 
                     } 
