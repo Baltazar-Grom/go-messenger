@@ -964,520 +964,457 @@
     </div>
 
     <script>
-        var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
-        var isRegisterMode = false, statusTimer;
-        let localStream, currentCall = null, currentCallTarget = '';
-        let currentFacingMode = 'user', isMuted = false, peer = null;
-        
-        // E2E Encryption переменные
-        let privateKey = null;
-        let publicKey = null;
-        let publicKeyBase64 = null;
-        let userPublicKeys = {}; // Хранилище публичных ключей пользователей
+    var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
+    var isRegisterMode = false, statusTimer;
+    let localStream, currentCall = null, currentCallTarget = '';
+    let currentFacingMode = 'user', isMuted = false, peer = null;
+    
+    // E2E Encryption
+    let privateKey = null;
+    let publicKey = null;
+    let publicKeyBase64 = null;
+    let userPublicKeys = {};
 
-        const icons = {
-            videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>'
+    const icons = {
+        videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>'
+    };
+
+    // ==================== E2E ENCRYPTION ====================
+    
+    function arrayBufferToBase64(buffer) {
+        let binary = '';
+        let bytes = new Uint8Array(buffer);
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    function base64ToArrayBuffer(base64) {
+        let binaryString = atob(base64);
+        let bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    async function generateKeyPair() {
+        const keyPair = await crypto.subtle.generateKey(
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            ['deriveBits', 'deriveKey']
+        );
+        privateKey = keyPair.privateKey;
+        publicKey = keyPair.publicKey;
+        
+        const exported = await crypto.subtle.exportKey('spki', publicKey);
+        publicKeyBase64 = arrayBufferToBase64(exported);
+        
+        console.log('E2E ключи сгенерированы');
+    }
+
+    async function importPublicKey(base64Key) {
+        return await crypto.subtle.importKey(
+            'spki',
+            base64ToArrayBuffer(base64Key),
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            []
+        );
+    }
+
+    async function deriveSharedKey(senderPrivateKey, recipientPublicKey) {
+        // Получаем общий секрет через ECDH
+        const sharedBits = await crypto.subtle.deriveBits(
+            { name: 'ECDH', public: recipientPublicKey, namedCurve: 'P-256' },
+            senderPrivateKey,
+            256
+        );
+        
+        // Импортируем как AES-256 ключ
+        return await crypto.subtle.importKey(
+            'raw',
+            sharedBits,
+            { name: 'AES-GCM' },
+            false,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    async function encryptMessage(text, recipientPublicKeyBase64) {
+        const recipientPublicKey = await importPublicKey(recipientPublicKeyBase64);
+        const sharedKey = await deriveSharedKey(privateKey, recipientPublicKey);
+        
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoder = new TextEncoder();
+        
+        const encrypted = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: iv },
+            sharedKey,
+            encoder.encode(text)
+        );
+
+        return {
+            encrypted: arrayBufferToBase64(encrypted),
+            iv: arrayBufferToBase64(iv)
         };
+    }
 
-        // ==================== E2E ENCRYPTION FUNCTIONS ====================
+    async function decryptMessage(encryptedBase64, ivBase64, senderPublicKeyBase64) {
+        try {
+            const senderPublicKey = await importPublicKey(senderPublicKeyBase64);
+            const sharedKey = await deriveSharedKey(privateKey, senderPublicKey);
+            
+            const encrypted = base64ToArrayBuffer(encryptedBase64);
+            const iv = new Uint8Array(base64ToArrayBuffer(ivBase64));
+
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: iv },
+                sharedKey,
+                encrypted
+            );
+
+            const decoder = new TextDecoder();
+            return decoder.decode(decrypted);
+        } catch (err) {
+            console.error('Ошибка расшифровки:', err);
+            return '[Ошибка расшифровки]';
+        }
+    }
+
+    // ==================== AUTH ====================
+
+    function toggleAuthMode() {
+        isRegisterMode = !isRegisterMode;
+        document.getElementById('authBtnText').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
+        document.getElementById('authToggleText').textContent = isRegisterMode ? 'Уже есть аккаунт?' : 'Нет аккаунта?';
+        document.getElementById('authToggleLink').textContent = isRegisterMode ? 'Войти' : 'Зарегистрироваться';
+        document.getElementById('authError').textContent = '';
+    }
+
+    async function submitAuth(e) {
+        e.preventDefault();
+        var username = document.getElementById('usernameInput').value.trim();
+        var password = document.getElementById('passwordInput').value;
+        var errorDiv = document.getElementById('authError');
+        errorDiv.textContent = '';
+        if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
         
-        async function generateKeyPair() {
-            const keyPair = await crypto.subtle.generateKey(
-                {
-                    name: 'ECDH',
-                    namedCurve: 'P-256'
-                },
-                true,
-                ['deriveBits', 'deriveKey']
-            );
-            privateKey = keyPair.privateKey;
-            publicKey = keyPair.publicKey;
-            
-            // Экспортируем публичный ключ в base64
-            const exported = await crypto.subtle.exportKey('spki', publicKey);
-            publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(exported)));
-            
-            console.log('E2E ключи сгенерированы');
-        }
-
-        async function importPublicKey(base64Key) {
-            const binaryString = atob(base64Key);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            
-            return await crypto.subtle.importKey(
-                'spki',
-                bytes,
-                {
-                    name: 'ECDH',
-                    namedCurve: 'P-256'
-                },
-                true,
-                []
-            );
-        }
-
-        async function encryptMessage(text, recipientPublicKeyBase64) {
-            // Генерируем случайный AES-256 ключ
-            const aesKey = await crypto.subtle.generateKey(
-                { name: 'AES-GCM', length: 256 },
-                true,
-                ['encrypt', 'decrypt']
-            );
-
-            // Импортируем публичный ключ получателя
-            const recipientPublicKey = await importPublicKey(recipientPublicKeyBase64);
-
-            // Получаем общий секрет через ECDH
-            const sharedSecret = await crypto.subtle.deriveBits(
-                {
-                    name: 'ECDH',
-                    public: recipientPublicKey
-                },
-                privateKey,
-                256
-            );
-
-            // Импортируем общий секрет как AES ключ
-            const derivedKey = await crypto.subtle.importKey(
-                'raw',
-                sharedSecret,
-                { name: 'AES-GCM' },
-                false,
-                ['encrypt']
-            );
-
-            // Генерируем IV
-            const iv = crypto.getRandomValues(new Uint8Array(12));
-
-            // Шифруем сообщение
-            const encoder = new TextEncoder();
-            const encrypted = await crypto.subtle.encrypt(
-                { name: 'AES-GCM', iv: iv },
-                derivedKey,
-                encoder.encode(text)
-            );
-
-            // Экспортируем AES ключ для шифрования
-            const exportedAesKey = await crypto.subtle.exportKey('raw', aesKey);
-            const encryptedAesKey = await crypto.subtle.encrypt(
-                { name: 'AES-GCM', iv: iv },
-                derivedKey,
-                exportedAesKey
-            );
-
-            return {
-                encrypted: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
-                encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedAesKey))),
-                iv: btoa(String.fromCharCode(...iv))
-            };
-        }
-
-        async function decryptMessage(encryptedBase64, encryptedKeyBase64, ivBase64, senderPublicKeyBase64) {
-            try {
-                // Декодируем данные
-                const encrypted = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
-                const encryptedKey = Uint8Array.from(atob(encryptedKeyBase64), c => c.charCodeAt(0));
-                const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
-
-                // Импортируем публичный ключ отправителя
-                const senderPublicKey = await importPublicKey(senderPublicKeyBase64);
-
-                // Получаем общий секрет
-                const sharedSecret = await crypto.subtle.deriveBits(
-                    {
-                        name: 'ECDH',
-                        public: senderPublicKey
-                    },
-                    privateKey,
-                    256
-                );
-
-                // Импортируем общий секрет как AES ключ
-                const derivedKey = await crypto.subtle.importKey(
-                    'raw',
-                    sharedSecret,
-                    { name: 'AES-GCM' },
-                    false,
-                    ['decrypt']
-                );
-
-                // Расшифровываем AES ключ
-                const aesKeyRaw = await crypto.subtle.decrypt(
-                    { name: 'AES-GCM', iv: iv },
-                    derivedKey,
-                    encryptedKey
-                );
-
-                // Импортируем AES ключ
-                const aesKey = await crypto.subtle.importKey(
-                    'raw',
-                    aesKeyRaw,
-                    { name: 'AES-GCM' },
-                    false,
-                    ['decrypt']
-                );
-
-                // Расшифровываем сообщение
-                const decrypted = await crypto.subtle.decrypt(
-                    { name: 'AES-GCM', iv: iv },
-                    aesKey,
-                    encrypted
-                );
-
-                const decoder = new TextDecoder();
-                return decoder.decode(decrypted);
-            } catch (err) {
-                console.error('Ошибка расшифровки:', err);
-                return '[Ошибка расшифровки]';
-            }
-        }
-
-        // ==================== AUTH FUNCTIONS ====================
-
-        function toggleAuthMode() {
-            isRegisterMode = !isRegisterMode;
-            document.getElementById('authBtnText').textContent = isRegisterMode ? 'Зарегистрироваться' : 'Войти';
-            document.getElementById('authToggleText').textContent = isRegisterMode ? 'Уже есть аккаунт?' : 'Нет аккаунта?';
-            document.getElementById('authToggleLink').textContent = isRegisterMode ? 'Войти' : 'Зарегистрироваться';
-            document.getElementById('authError').textContent = '';
-        }
-
-        async function submitAuth(e) {
-            e.preventDefault();
-            var username = document.getElementById('usernameInput').value.trim();
-            var password = document.getElementById('passwordInput').value;
-            var errorDiv = document.getElementById('authError');
-            errorDiv.textContent = '';
-            if (!username || !password) { errorDiv.textContent = 'Заполните все поля'; return; }
-            
-            try {
-                const response = await fetch(isRegisterMode ? '/register' : '/login', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    currentUser = username;
-                    localStorage.setItem('messenger_username', username);
-                    
-                    // Генерируем E2E ключи
-                    await generateKeyPair();
-                    
-                    document.getElementById('authScreen').classList.add('hidden');
-                    document.getElementById('app').classList.add('active');
-                    connectWebSocket();
-                } else { errorDiv.textContent = data.message || 'Ошибка'; }
-            } catch (err) { errorDiv.textContent = 'Ошибка соединения'; }
-        }
-
-        function logout() { 
-            if (peer) peer.destroy();
-            localStorage.removeItem('messenger_username'); 
-            location.reload(); 
-        }
-
-        function connectWebSocket() {
-            var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
-            socket = new WebSocket(ws);
-            socket.onopen = function() {
-                // Отправляем регистрацию с публичным ключом
-                socket.send(JSON.stringify({ 
-                    type: "register", 
-                    username: currentUser,
-                    public_key: publicKeyBase64
-                }));
-                loadGeneralHistory();
-                initPeer();
-            };
-            socket.onmessage = async function(event) {
-                var data = JSON.parse(event.data);
-                if (data.type === "typing") {
-                    document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
-                    clearTimeout(statusTimer);
-                    statusTimer = setTimeout(function() { document.getElementById('typingIndicator').textContent = ''; }, 2000);
-                    return;
-                }
-                if (data.type === "user_list") {
-                    // Сохраняем публичные ключи пользователей
-                    if (data.users && Array.isArray(data.users)) {
-                        data.users.forEach(u => {
-                            if (u.username && u.public_key) {
-                                userPublicKeys[u.username] = u.public_key;
-                            }
-                        });
-                    }
-                    updateUserList(data.users.map ? data.users.map(u => u.username || u) : data.users);
-                    return;
-                }
-                if (data.type === "message" && currentChat === 'general')
-                    addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
-                else if (data.type === "private") {
-                    var partner = data.username === currentUser ? data.receiver : data.username;
-                    if (currentChat === partner) {
-                        // Расшифровываем сообщение если оно зашифровано
-                        let text = data.text;
-                        if (data.encrypted && data.encrypted_key && data.iv) {
-                            const senderKey = userPublicKeys[data.username];
-                            if (senderKey) {
-                                text = await decryptMessage(data.encrypted, data.encrypted_key, data.iv, senderKey);
-                            }
-                        }
-                        addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
-                    }
-                } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id)
-                    addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
-                else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
-            };
-        }
-
-        function initPeer() {
-            var peerId = 'msg_' + currentUser;
-            peer = new Peer(peerId, { debug: 2 });
-            peer.on('open', function(id) { console.log('PeerJS ID:', id); });
-            peer.on('call', function(call) {
-                currentCall = call;
-                currentCallTarget = call.metadata.username || 'Неизвестный';
-                document.getElementById('incomingCallName').textContent = currentCallTarget;
-                document.getElementById('incomingCallAvatar').textContent = currentCallTarget.charAt(0).toUpperCase();
-                document.getElementById('incomingCallModal').classList.add('active');
+        try {
+            const response = await fetch(isRegisterMode ? '/register' : '/login', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
             });
-            peer.on('error', function(err) { console.error('PeerJS error:', err); });
-        }
+            const data = await response.json();
+            
+            if (data.success) {
+                currentUser = username;
+                localStorage.setItem('messenger_username', username);
+                await generateKeyPair();
+                document.getElementById('authScreen').classList.add('hidden');
+                document.getElementById('app').classList.add('active');
+                connectWebSocket();
+            } else { errorDiv.textContent = data.message || 'Ошибка'; }
+        } catch (err) { errorDiv.textContent = 'Ошибка соединения'; }
+    }
 
-        window.onload = async function() {
-            var saved = localStorage.getItem('messenger_username');
-            if (saved) { 
-                currentUser = saved; 
-                await generateKeyPair(); // Генерируем ключи при авто-входе
-                document.getElementById('authScreen').classList.add('hidden'); 
-                document.getElementById('app').classList.add('active'); 
-                connectWebSocket(); 
-            }
-        };
+    function logout() { 
+        if (peer) peer.destroy();
+        localStorage.removeItem('messenger_username'); 
+        location.reload(); 
+    }
 
-        function switchToGeneral() { 
-            currentChat = 'general'; currentGroupID = 0; 
-            document.getElementById('chatHeaderName').textContent = 'Общий чат';
-            document.getElementById('chatHeaderStatus').textContent = 'Все участники';
-            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active'));
-            document.getElementById('generalChat').classList.add('active');
-            document.getElementById('chatMessages').innerHTML = '';
+    function connectWebSocket() {
+        var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
+        socket = new WebSocket(ws);
+        socket.onopen = function() {
+            socket.send(JSON.stringify({ 
+                type: "register", 
+                username: currentUser,
+                public_key: publicKeyBase64
+            }));
             loadGeneralHistory();
-            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active');
-        }
-
-        function switchToPrivate(u) { 
-            currentChat = u; currentGroupID = 0;
-            document.getElementById('chatHeaderName').textContent = u;
-            document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E';
-            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-            document.getElementById('chatMessages').innerHTML = '';
-            loadPrivateHistory(u);
-            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active');
-        }
-
-        function switchToGroup(id, name) { 
-            currentChat = 'group'; currentGroupID = id;
-            document.getElementById('chatHeaderName').textContent = name;
-            document.getElementById('chatHeaderStatus').textContent = 'Групповой чат';
-            document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-            document.getElementById('chatMessages').innerHTML = '';
-            loadGroupHistory(id);
-            if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active');
-        }
-
-        function backToList() {
-            document.getElementById('chatArea').classList.remove('active');
-        }
-
-        function loadGeneralHistory() { fetch('/history').then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
-        
-        async function loadPrivateHistory(p) { 
-            const data = await fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json());
-            if (data) {
-                for (const m of data) {
-                    let text = m.text;
-                    // Расшифровываем если есть зашифрованные данные
-                    if (m.encrypted && m.encrypted_key && m.iv) {
-                        const senderKey = userPublicKeys[m.sender];
+            initPeer();
+        };
+        socket.onmessage = async function(event) {
+            var data = JSON.parse(event.data);
+            if (data.type === "typing") {
+                document.getElementById('typingIndicator').textContent = data.username + ' печатает...';
+                clearTimeout(statusTimer);
+                statusTimer = setTimeout(function() { document.getElementById('typingIndicator').textContent = ''; }, 2000);
+                return;
+            }
+            if (data.type === "user_list") {
+                if (data.users && Array.isArray(data.users)) {
+                    data.users.forEach(u => {
+                        if (u.username && u.public_key) {
+                            userPublicKeys[u.username] = u.public_key;
+                        }
+                    });
+                }
+                updateUserList(data.users.map ? data.users.map(u => u.username || u) : data.users);
+                return;
+            }
+            if (data.type === "message" && currentChat === 'general')
+                addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
+            else if (data.type === "private") {
+                var partner = data.username === currentUser ? data.receiver : data.username;
+                if (currentChat === partner) {
+                    let text = data.text;
+                    if (data.encrypted && data.iv) {
+                        const senderKey = userPublicKeys[data.username];
                         if (senderKey) {
-                            text = await decryptMessage(m.encrypted, m.encrypted_key, m.iv, senderKey);
+                            text = await decryptMessage(data.encrypted, data.iv, senderKey);
                         }
                     }
-                    addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true);
+                    addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, true);
                 }
-            }
+            } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id)
+                addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
+            else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
+        };
+    }
+
+    function initPeer() {
+        var peerId = 'msg_' + currentUser;
+        peer = new Peer(peerId, { debug: 2 });
+        peer.on('open', function(id) { console.log('PeerJS ID:', id); });
+        peer.on('call', function(call) {
+            currentCall = call;
+            currentCallTarget = call.metadata.username || 'Неизвестный';
+            document.getElementById('incomingCallName').textContent = currentCallTarget;
+            document.getElementById('incomingCallAvatar').textContent = currentCallTarget.charAt(0).toUpperCase();
+            document.getElementById('incomingCallModal').classList.add('active');
+        });
+        peer.on('error', function(err) { console.error('PeerJS error:', err); });
+    }
+
+    window.onload = async function() {
+        var saved = localStorage.getItem('messenger_username');
+        if (saved) { 
+            currentUser = saved; 
+            await generateKeyPair();
+            document.getElementById('authScreen').classList.add('hidden'); 
+            document.getElementById('app').classList.add('active'); 
+            connectWebSocket(); 
         }
-        
-        function loadGroupHistory(id) { fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
+    };
 
-        function updateUserList(users) {
-            var list = document.getElementById('userList');
-            list.innerHTML = '';
-            var others = users.filter(u => u !== currentUser);
-            others.forEach(function(u) {
-                var div = document.createElement('div');
-                div.className = 'chat-item';
-                const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
-                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
-                div.onclick = function() { switchToPrivate(u); };
-                list.appendChild(div);
-            });
-        }
+    function switchToGeneral() { 
+        currentChat = 'general'; currentGroupID = 0; 
+        document.getElementById('chatHeaderName').textContent = 'Общий чат';
+        document.getElementById('chatHeaderStatus').textContent = 'Все участники';
+        document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active'));
+        document.getElementById('generalChat').classList.add('active');
+        document.getElementById('chatMessages').innerHTML = '';
+        loadGeneralHistory();
+        if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active');
+    }
 
-        function addMessageToUI(username, text, image, fileName, isOwn, isEncrypted = false) {
-            var div = document.createElement('div');
-            div.className = 'message ' + (isOwn ? 'out' : 'in') + (isEncrypted ? ' encrypted' : '');
-            var content = '<div class="message-meta">' + username + (isEncrypted ? ' 🔒' : '') + '</div>';
-            if (fileName) {
-                content += '<div class="message-file"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><div class="message-file-info"><div class="message-file-name">' + fileName + '</div><a href="' + image + '" download="' + fileName + '" class="message-file-download">Скачать</a></div></div>';
-            } else if (image) {
-                content += '<img src="' + image + '" class="message-image" onclick="window.open(this.src)">';
-            }
-            if (text) content += '<div class="message-text">' + text + '</div>';
-            div.innerHTML = content;
-            document.getElementById('chatMessages').appendChild(div);
-            document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-        }
+    function switchToPrivate(u) { 
+        currentChat = u; currentGroupID = 0;
+        document.getElementById('chatHeaderName').textContent = u;
+        document.getElementById('chatHeaderStatus').textContent = 'В сети 🔒 E2E';
+        document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active'));
+        event.currentTarget.classList.add('active');
+        document.getElementById('chatMessages').innerHTML = '';
+        loadPrivateHistory(u);
+        if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active');
+    }
 
-        function addSystemMessage(text) {
-            var div = document.createElement('div');
-            div.className = 'message system';
-            div.innerHTML = text;
-            document.getElementById('chatMessages').appendChild(div);
-            document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-        }
+    function switchToGroup(id, name) { 
+        currentChat = 'group'; currentGroupID = id;
+        document.getElementById('chatHeaderName').textContent = name;
+        document.getElementById('chatHeaderStatus').textContent = 'Групповой чат';
+        document.querySelectorAll('.chat-item').forEach(e => e.classList.remove('active'));
+        event.currentTarget.classList.add('active');
+        document.getElementById('chatMessages').innerHTML = '';
+        loadGroupHistory(id);
+        if (window.innerWidth <= 768) document.getElementById('chatArea').classList.add('active');
+    }
 
-        function handleTyping() { if (socket && socket.readyState === 1) socket.send(JSON.stringify({type:'typing',username:currentUser})); }
+    function backToList() {
+        document.getElementById('chatArea').classList.remove('active');
+    }
 
-        function handleFileSelect(event) {
-            var file = event.target.files[0]; if (!file) return;
-            if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
-            if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
-            var reader = new FileReader();
-            reader.onload = async function(e) {
-                var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
-                if (currentChat==='general') msg.type='message';
-                else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
-                else { 
-                    msg.type='private'; 
-                    msg.receiver=currentChat;
-                    // Шифруем файл если это личное сообщение
-                    const recipientKey = userPublicKeys[currentChat];
-                    if (recipientKey) {
-                        const encrypted = await encryptMessage(e.target.result, recipientKey);
-                        msg.encrypted = encrypted.encrypted;
-                        msg.encrypted_key = encrypted.encryptedKey;
-                        msg.iv = encrypted.iv;
+    function loadGeneralHistory() { fetch('/history').then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
+    
+    async function loadPrivateHistory(p) { 
+        const data = await fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json());
+        if (data) {
+            for (const m of data) {
+                let text = m.text;
+                if (m.encrypted && m.iv) {
+                    const senderKey = userPublicKeys[m.sender];
+                    if (senderKey) {
+                        text = await decryptMessage(m.encrypted, m.iv, senderKey);
                     }
                 }
-                socket.send(JSON.stringify(msg));
-            }; reader.readAsDataURL(file); event.target.value = '';
+                addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, true);
+            }
         }
+    }
+    
+    function loadGroupHistory(id) { fetch('/group_history?group_id='+id).then(r=>r.json()).then(d => { if(d) d.forEach(m => addMessageToUI(m.username, m.text, m.image, m.file_name, m.username === currentUser)); }); }
 
-        async function sendMessage() {
-            var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
-            if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
-            var msg = { text: input.value };
+    function updateUserList(users) {
+        var list = document.getElementById('userList');
+        list.innerHTML = '';
+        var others = users.filter(u => u !== currentUser);
+        others.forEach(function(u) {
+            var div = document.createElement('div');
+            div.className = 'chat-item';
+            const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
+            div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
+            div.onclick = function() { switchToPrivate(u); };
+            list.appendChild(div);
+        });
+    }
+
+    function addMessageToUI(username, text, image, fileName, isOwn, isEncrypted = false) {
+        var div = document.createElement('div');
+        div.className = 'message ' + (isOwn ? 'out' : 'in') + (isEncrypted ? ' encrypted' : '');
+        var content = '<div class="message-meta">' + username + (isEncrypted ? ' 🔒' : '') + '</div>';
+        if (fileName) {
+            content += '<div class="message-file"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg><div class="message-file-info"><div class="message-file-name">' + fileName + '</div><a href="' + image + '" download="' + fileName + '" class="message-file-download">Скачать</a></div></div>';
+        } else if (image) {
+            content += '<img src="' + image + '" class="message-image" onclick="window.open(this.src)">';
+        }
+        if (text) content += '<div class="message-text">' + text + '</div>';
+        div.innerHTML = content;
+        document.getElementById('chatMessages').appendChild(div);
+        document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+    }
+
+    function addSystemMessage(text) {
+        var div = document.createElement('div');
+        div.className = 'message system';
+        div.innerHTML = text;
+        document.getElementById('chatMessages').appendChild(div);
+        document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+    }
+
+    function handleTyping() { if (socket && socket.readyState === 1) socket.send(JSON.stringify({type:'typing',username:currentUser})); }
+
+    function handleFileSelect(event) {
+        var file = event.target.files[0]; if (!file) return;
+        if (file.size > 5*1024*1024) { alert('Максимум 5 МБ'); return; }
+        if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
+        var reader = new FileReader();
+        reader.onload = async function(e) {
+            var msg = { text:'', image: e.target.result, file_name: file.type.startsWith('image/') ? '' : file.name };
             if (currentChat==='general') msg.type='message';
             else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
             else { 
                 msg.type='private'; 
                 msg.receiver=currentChat;
-                // Шифруем сообщение если есть публичный ключ получателя
                 const recipientKey = userPublicKeys[currentChat];
                 if (recipientKey) {
-                    const encrypted = await encryptMessage(input.value, recipientKey);
+                    const encrypted = await encryptMessage(e.target.result, recipientKey);
                     msg.encrypted = encrypted.encrypted;
-                    msg.encrypted_key = encrypted.encryptedKey;
                     msg.iv = encrypted.iv;
-                    msg.text = '[Зашифровано]'; // Сервер видит только это
                 }
             }
-            socket.send(JSON.stringify(msg)); input.value = '';
+            socket.send(JSON.stringify(msg));
+        }; reader.readAsDataURL(file); event.target.value = '';
+    }
+
+    async function sendMessage() {
+        var input = document.getElementById('messageInput'); if (!input.value.trim()) return;
+        if (!socket || socket.readyState !== 1) { alert('Нет соединения'); return; }
+        var msg = { text: input.value };
+        if (currentChat==='general') msg.type='message';
+        else if (currentChat==='group') { msg.type='group_message'; msg.group_id=currentGroupID; }
+        else { 
+            msg.type='private'; 
+            msg.receiver=currentChat;
+            const recipientKey = userPublicKeys[currentChat];
+            if (recipientKey) {
+                const encrypted = await encryptMessage(input.value, recipientKey);
+                msg.encrypted = encrypted.encrypted;
+                msg.iv = encrypted.iv;
+                msg.text = '[Зашифровано]';
+            }
         }
+        socket.send(JSON.stringify(msg)); input.value = '';
+    }
 
-        function showCreateGroupModal() { document.getElementById('createGroupModal').classList.add('active'); }
-        function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
-        function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) { hideCreateGroupModal(); } else alert(d.message||'Ошибка'); }); }
+    function showCreateGroupModal() { document.getElementById('createGroupModal').classList.add('active'); }
+    function hideCreateGroupModal() { document.getElementById('createGroupModal').classList.remove('active'); document.getElementById('groupNameInput').value = ''; }
+    function createGroup() { var n = document.getElementById('groupNameInput').value.trim(); if (!n) { alert('Введите название'); return; } fetch('/create_group', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n, creator:currentUser}) }).then(r=>r.json()).then(d => { if(d.success) { hideCreateGroupModal(); } else alert(d.message||'Ошибка'); }); }
 
-        async function getMedia(facing) {
-            try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } 
-            catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } }
-        }
+    async function getMedia(facing) {
+        try { return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } } }); } 
+        catch(e) { try { return await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch(e2) { throw e2; } }
+    }
 
-        function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
+    function updateCallStatus(text) { document.getElementById('callStatus').textContent = text; }
 
-        async function startCall(target, event) {
-            if (event) event.stopPropagation();
-            currentCallTarget = target; currentFacingMode = 'user';
-            updateCallStatus('Вызов...');
-            try {
-                localStream = await getMedia(currentFacingMode);
-                document.getElementById('localVideo').srcObject = localStream;
-                document.getElementById('callScreen').classList.add('active');
-                var targetPeerId = 'msg_' + target;
-                currentCall = peer.call(targetPeerId, localStream, { metadata: { username: currentUser } });
-                if (!currentCall) { alert('Не удалось дозвониться'); endCall(); return; }
-                currentCall.on('stream', function(remoteStream) { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
-                currentCall.on('close', function() { alert(target + ' завершил звонок'); endCall(); });
-                currentCall.on('error', function(err) { alert('Ошибка соединения'); endCall(); });
-            } catch(err) { alert('Ошибка камеры: ' + err.message); endCall(); }
-        }
+    async function startCall(target, event) {
+        if (event) event.stopPropagation();
+        currentCallTarget = target; currentFacingMode = 'user';
+        updateCallStatus('Вызов...');
+        try {
+            localStream = await getMedia(currentFacingMode);
+            document.getElementById('localVideo').srcObject = localStream;
+            document.getElementById('callScreen').classList.add('active');
+            var targetPeerId = 'msg_' + target;
+            currentCall = peer.call(targetPeerId, localStream, { metadata: { username: currentUser } });
+            if (!currentCall) { alert('Не удалось дозвониться'); endCall(); return; }
+            currentCall.on('stream', function(remoteStream) { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
+            currentCall.on('close', function() { alert(target + ' завершил звонок'); endCall(); });
+            currentCall.on('error', function(err) { alert('Ошибка соединения'); endCall(); });
+        } catch(err) { alert('Ошибка камеры: ' + err.message); endCall(); }
+    }
 
-        async function acceptCall() {
-            document.getElementById('incomingCallModal').classList.remove('active');
-            updateCallStatus('Подключение...');
-            try {
-                localStream = await getMedia(currentFacingMode);
-                document.getElementById('localVideo').srcObject = localStream;
-                document.getElementById('callScreen').classList.add('active');
-                currentCall.answer(localStream);
-                currentCall.on('stream', function(remoteStream) { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
-                currentCall.on('close', function() { endCall(); });
-            } catch(err) { alert('Ошибка: ' + err.message); endCall(); }
-        }
+    async function acceptCall() {
+        document.getElementById('incomingCallModal').classList.remove('active');
+        updateCallStatus('Подключение...');
+        try {
+            localStream = await getMedia(currentFacingMode);
+            document.getElementById('localVideo').srcObject = localStream;
+            document.getElementById('callScreen').classList.add('active');
+            currentCall.answer(localStream);
+            currentCall.on('stream', function(remoteStream) { document.getElementById('remoteVideo').srcObject = remoteStream; updateCallStatus('Подключено'); });
+            currentCall.on('close', function() { endCall(); });
+        } catch(err) { alert('Ошибка: ' + err.message); endCall(); }
+    }
 
-        function rejectCall() {
-            document.getElementById('incomingCallModal').classList.remove('active');
-            if (currentCall) { currentCall.close(); currentCall = null; }
-        }
+    function rejectCall() {
+        document.getElementById('incomingCallModal').classList.remove('active');
+        if (currentCall) { currentCall.close(); currentCall = null; }
+    }
 
-        async function switchCamera() {
-            if (!localStream || !currentCall) return;
-            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-            try {
-                var ns = await getMedia(currentFacingMode);
-                var vt = ns.getVideoTracks()[0];
-                var sender = currentCall.peerConnection.getSenders().find(function(s) { return s.track && s.track.kind === 'video'; });
-                if (sender) await sender.replaceTrack(vt);
-                localStream.getVideoTracks().forEach(function(t) { t.stop(); });
-                localStream = ns;
-                document.getElementById('localVideo').srcObject = ns;
-            } catch(err) { alert('Не удалось переключить камеру'); }
-        }
+    async function switchCamera() {
+        if (!localStream || !currentCall) return;
+        currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+        try {
+            var ns = await getMedia(currentFacingMode);
+            var vt = ns.getVideoTracks()[0];
+            var sender = currentCall.peerConnection.getSenders().find(function(s) { return s.track && s.track.kind === 'video'; });
+            if (sender) await sender.replaceTrack(vt);
+            localStream.getVideoTracks().forEach(function(t) { t.stop(); });
+            localStream = ns;
+            document.getElementById('localVideo').srcObject = ns;
+        } catch(err) { alert('Не удалось переключить камеру'); }
+    }
 
-        function toggleMute() {
-            if (!localStream) return;
-            isMuted = !isMuted;
-            localStream.getAudioTracks().forEach(function(t) { t.enabled = !isMuted; });
-            document.getElementById('muteIcon').innerHTML = isMuted ? '<path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>' : '<path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>';
-        }
+    function toggleMute() {
+        if (!localStream) return;
+        isMuted = !isMuted;
+        localStream.getAudioTracks().forEach(function(t) { t.enabled = !isMuted; });
+        document.getElementById('muteIcon').innerHTML = isMuted ? '<path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>' : '<path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>';
+    }
 
-        function endCall() {
-            if (currentCall) { currentCall.close(); currentCall = null; }
-            if (localStream) { localStream.getTracks().forEach(function(t){ t.stop(); }); localStream = null; }
-            document.getElementById('callScreen').classList.remove('active');
-            document.getElementById('localVideo').srcObject = null;
-            document.getElementById('remoteVideo').srcObject = null;
-            currentCallTarget = ''; isMuted = false;
-        }
-    </script>
+    function endCall() {
+        if (currentCall) { currentCall.close(); currentCall = null; }
+        if (localStream) { localStream.getTracks().forEach(function(t){ t.stop(); }); localStream = null; }
+        document.getElementById('callScreen').classList.remove('active');
+        document.getElementById('localVideo').srcObject = null;
+        document.getElementById('remoteVideo').srcObject = null;
+        currentCallTarget = ''; isMuted = false;
+    }
+</script>
 </body>
 </html>

@@ -20,7 +20,7 @@ var upgrader = websocket.Upgrader{
 type Client struct {
 	Conn      *websocket.Conn
 	Username  string
-	PublicKey string // Base64-encoded публичный ключ
+	PublicKey string
 }
 
 var clients = make(map[*websocket.Conn]*Client)
@@ -29,20 +29,19 @@ var mutex = &sync.Mutex{}
 var db *sql.DB
 
 type Message struct {
-	Type         string   `json:"type"`
-	Username     string   `json:"username"`
-	Text         string   `json:"text"`
-	Image        string   `json:"image,omitempty"`
-	FileName     string   `json:"file_name,omitempty"`
-	Payload      string   `json:"payload,omitempty"`
-	Users        []string `json:"users,omitempty"`
-	Receiver     string   `json:"receiver,omitempty"`
-	GroupID      int      `json:"group_id,omitempty"`
-	GroupName    string   `json:"group_name,omitempty"`
-	PublicKey    string   `json:"public_key,omitempty"`    // Публичный ключ пользователя
-	Encrypted    string   `json:"encrypted,omitempty"`     // Зашифрованное сообщение
-	EncryptedKey string   `json:"encrypted_key,omitempty"` // Зашифрованный AES ключ
-	Iv           string   `json:"iv,omitempty"`            // Вектор инициализации
+	Type      string   `json:"type"`
+	Username  string   `json:"username"`
+	Text      string   `json:"text"`
+	Image     string   `json:"image,omitempty"`
+	FileName  string   `json:"file_name,omitempty"`
+	Payload   string   `json:"payload,omitempty"`
+	Users     []string `json:"users,omitempty"`
+	Receiver  string   `json:"receiver,omitempty"`
+	GroupID   int      `json:"group_id,omitempty"`
+	GroupName string   `json:"group_name,omitempty"`
+	PublicKey string   `json:"public_key,omitempty"`
+	Encrypted string   `json:"encrypted,omitempty"`
+	Iv        string   `json:"iv,omitempty"`
 }
 
 type AuthRequest struct {
@@ -71,7 +70,7 @@ func initDB() {
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS private_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, receiver TEXT, text TEXT, image TEXT, file_name TEXT, encrypted TEXT, encrypted_key TEXT, iv TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS private_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, receiver TEXT, text TEXT, image TEXT, file_name TEXT, encrypted TEXT, iv TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, creator TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
@@ -83,7 +82,6 @@ func initDB() {
 	db.Exec("ALTER TABLE private_messages ADD COLUMN file_name TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE group_messages ADD COLUMN file_name TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE private_messages ADD COLUMN encrypted TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE private_messages ADD COLUMN encrypted_key TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE private_messages ADD COLUMN iv TEXT DEFAULT ''")
 }
 
@@ -242,22 +240,12 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 			handleWebRTC(msg)
 			continue
 		}
-		if msg.Type == "set_public_key" {
-			// Сохраняем публичный ключ пользователя
-			mutex.Lock()
-			if c, ok := clients[conn]; ok {
-				c.PublicKey = msg.PublicKey
-			}
-			mutex.Unlock()
-			continue
-		}
 		if msg.Type == "group_message" && msg.GroupID != 0 {
 			db.Exec("INSERT INTO group_messages (group_id, username, text, image, file_name) VALUES (?, ?, ?, ?, ?)", msg.GroupID, username, msg.Text, msg.Image, msg.FileName)
 			handleGroupMessage(msg)
 		} else if msg.Type == "private" && msg.Receiver != "" {
-			// Сохраняем зашифрованное сообщение
-			db.Exec("INSERT INTO private_messages (sender, receiver, text, image, file_name, encrypted, encrypted_key, iv) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-				username, msg.Receiver, msg.Text, msg.Image, msg.FileName, msg.Encrypted, msg.EncryptedKey, msg.Iv)
+			db.Exec("INSERT INTO private_messages (sender, receiver, text, image, file_name, encrypted, iv) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				username, msg.Receiver, msg.Text, msg.Image, msg.FileName, msg.Encrypted, msg.Iv)
 			handlePrivateMessage(msg)
 		} else {
 			db.Exec("INSERT INTO messages (username, text, image, file_name) VALUES (?, ?, ?, ?)", username, msg.Text, msg.Image, msg.FileName)
@@ -323,7 +311,6 @@ func sendUserList() {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	// Собираем пользователей с их публичными ключами
 	type UserWithKey struct {
 		Username  string `json:"username"`
 		PublicKey string `json:"public_key"`
@@ -336,7 +323,6 @@ func sendUserList() {
 		})
 	}
 
-	// Сериализуем вручную для передачи ключей
 	jsonData, _ := json.Marshal(map[string]interface{}{
 		"type":  "user_list",
 		"users": usersWithKeys,
@@ -383,7 +369,7 @@ func historyHandler(w http.ResponseWriter, r *http.Request) {
 func privateHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	user1 := r.URL.Query().Get("user1")
 	user2 := r.URL.Query().Get("user2")
-	rows, err := db.Query(`SELECT sender, text, image, file_name, encrypted, encrypted_key, iv FROM private_messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY timestamp DESC LIMIT 50`, user1, user2, user2, user1)
+	rows, err := db.Query(`SELECT sender, text, image, file_name, encrypted, iv FROM private_messages WHERE (sender=? AND receiver=?) OR (sender=? AND receiver=?) ORDER BY timestamp DESC LIMIT 50`, user1, user2, user2, user1)
 	if err != nil {
 		json.NewEncoder(w).Encode([]map[string]interface{}{})
 		return
@@ -391,11 +377,11 @@ func privateHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	var history []map[string]interface{}
 	for rows.Next() {
-		var s, t, img, fn, enc, encKey, iv string
-		rows.Scan(&s, &t, &img, &fn, &enc, &encKey, &iv)
+		var s, t, img, fn, enc, iv string
+		rows.Scan(&s, &t, &img, &fn, &enc, &iv)
 		history = append(history, map[string]interface{}{
 			"sender": s, "text": t, "image": img, "file_name": fn,
-			"encrypted": enc, "encrypted_key": encKey, "iv": iv,
+			"encrypted": enc, "iv": iv,
 		})
 	}
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
