@@ -238,7 +238,7 @@
         </div>
     </div>
 
-    <script>
+        <script>
         var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
         var isRegisterMode = false, statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
@@ -249,6 +249,7 @@
         let myPublicKey = null;
         let myPublicKeyBase64 = null;
         let userPublicKeys = {};
+        let sharedKeysCache = {}; // Кэш общих ключей для скорости
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
@@ -269,9 +270,8 @@
             }, duration);
         }
 
-        // ==================== E2E ШИФРОВАНИЕ ====================
+        // ==================== E2E ШИФРОВАНИЕ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ====================
         
-        // Конвертация ArrayBuffer <-> Base64
         function arrayBufferToBase64(buffer) {
             let binary = '';
             let bytes = new Uint8Array(buffer);
@@ -290,30 +290,73 @@
             return bytes.buffer;
         }
 
-        // Генерация пары ключей ECDH
-        async function generateKeyPair() {
-            try {
-                const keyPair = await crypto.subtle.generateKey(
-                    {
-                        name: 'ECDH',
-                        namedCurve: 'P-256'
-                    },
-                    true,
-                    ['deriveBits', 'deriveKey']
-                );
-                
-                myPrivateKey = keyPair.privateKey;
-                myPublicKey = keyPair.publicKey;
-                
-                // Экспорт публичного ключа в Base64
-                const exportedKey = await crypto.subtle.exportKey('spki', myPublicKey);
-                myPublicKeyBase64 = arrayBufferToBase64(exportedKey);
-                
-                console.log('✅ Ключи ECDH сгенерированы');
-                return true;
-            } catch (err) {
-                console.error('❌ Ошибка генерации ключей:', err);
-                return false;
+        // Загрузка или генерация ключевой пары
+        async function loadOrGenerateKeyPair() {
+            const storageKey = 'e2e_keypair_' + currentUser;
+            const savedKeys = localStorage.getItem(storageKey);
+
+            if (savedKeys) {
+                try {
+                    const parsed = JSON.parse(savedKeys);
+                    
+                    // Импортируем приватный ключ из JWK
+                    myPrivateKey = await crypto.subtle.importKey(
+                        'jwk',
+                        parsed.privateKey,
+                        { name: 'ECDH', namedCurve: 'P-256' },
+                        true,
+                        ['deriveKey', 'deriveBits']
+                    );
+                    
+                    // Импортируем публичный ключ из SPKI
+                    const publicKeyBuffer = base64ToArrayBuffer(parsed.publicKey);
+                    myPublicKey = await crypto.subtle.importKey(
+                        'spki',
+                        publicKeyBuffer,
+                        { name: 'ECDH', namedCurve: 'P-256' },
+                        true,
+                        []
+                    );
+                    
+                    myPublicKeyBase64 = parsed.publicKey;
+                    console.log('✅ Ключи загружены из localStorage');
+                    return true;
+                } catch(e) {
+                    console.warn('Ошибка загрузки ключей, генерируем новые:', e);
+                    localStorage.removeItem(storageKey);
+                    return await loadOrGenerateKeyPair();
+                }
+            } else {
+                try {
+                    // Генерация новой пары ключей
+                    const keyPair = await crypto.subtle.generateKey(
+                        { name: 'ECDH', namedCurve: 'P-256' },
+                        true,
+                        ['deriveKey', 'deriveBits']
+                    );
+                    
+                    myPrivateKey = keyPair.privateKey;
+                    myPublicKey = keyPair.publicKey;
+                    
+                    // Экспорт публичного ключа в SPKI -> Base64
+                    const exportedPublicKey = await crypto.subtle.exportKey('spki', myPublicKey);
+                    myPublicKeyBase64 = arrayBufferToBase64(exportedPublicKey);
+                    
+                    // Экспорт приватного ключа в JWK
+                    const exportedPrivateKey = await crypto.subtle.exportKey('jwk', myPrivateKey);
+                    
+                    // Сохраняем в localStorage
+                    localStorage.setItem(storageKey, JSON.stringify({
+                        publicKey: myPublicKeyBase64,
+                        privateKey: exportedPrivateKey
+                    }));
+                    
+                    console.log('🔑 Новые ключи сгенерированы и сохранены');
+                    return true;
+                } catch (err) {
+                    console.error('❌ Ошибка генерации ключей:', err);
+                    return false;
+                }
             }
         }
 
@@ -324,10 +367,7 @@
                 const publicKey = await crypto.subtle.importKey(
                     'spki',
                     keyBuffer,
-                    {
-                        name: 'ECDH',
-                        namedCurve: 'P-256'
-                    },
+                    { name: 'ECDH', namedCurve: 'P-256' },
                     true,
                     []
                 );
@@ -338,30 +378,30 @@
             }
         }
 
-        // Вычисление общего секрета и деривация AES ключа
-        async function deriveSharedSecret(privateKey, publicKey) {
+        // Получение общего AES ключа (с кэшированием)
+        async function getSharedKey(otherPublicKeyBase64) {
+            if (sharedKeysCache[otherPublicKeyBase64]) {
+                return sharedKeysCache[otherPublicKeyBase64];
+            }
+            
             try {
-                // ECDH для получения общего секрета
-                const sharedBits = await crypto.subtle.deriveBits(
+                const otherPublicKey = await importPublicKey(otherPublicKeyBase64);
+                if (!otherPublicKey) throw new Error('Не удалось импортировать ключ');
+                
+                // ECDH + deriveKey напрямую в AES-GCM
+                const aesKey = await crypto.subtle.deriveKey(
                     {
                         name: 'ECDH',
-                        public: publicKey
+                        public: otherPublicKey
                     },
-                    privateKey,
-                    256
-                );
-                
-                // SHA-256 для деривации AES ключа
-                const aesKey = await crypto.subtle.digest('SHA-256', sharedBits);
-                
-                // Импорт как AES-GCM ключ
-                return await crypto.subtle.importKey(
-                    'raw',
-                    aesKey,
-                    { name: 'AES-GCM' },
+                    myPrivateKey,
+                    { name: 'AES-GCM', length: 256 },
                     false,
                     ['encrypt', 'decrypt']
                 );
+                
+                sharedKeysCache[otherPublicKeyBase64] = aesKey;
+                return aesKey;
             } catch (err) {
                 console.error('❌ Ошибка деривации ключа:', err);
                 return null;
@@ -371,22 +411,16 @@
         // Шифрование сообщения
         async function encryptMessage(text, recipientPublicKeyBase64) {
             try {
-                const recipientPublicKey = await importPublicKey(recipientPublicKeyBase64);
-                if (!recipientPublicKey) throw new Error('Не удалось импортировать ключ получателя');
+                const aesKey = await getSharedKey(recipientPublicKeyBase64);
+                if (!aesKey) throw new Error('Не удалось получить общий ключ');
                 
-                const aesKey = await deriveSharedSecret(myPrivateKey, recipientPublicKey);
-                if (!aesKey) throw new Error('Не удалось вычислить общий ключ');
-                
-                // Генерация случайного IV
+                // Генерация случайного IV (12 байт для GCM)
                 const iv = crypto.getRandomValues(new Uint8Array(12));
                 
                 // Шифрование
                 const encodedText = new TextEncoder().encode(text);
                 const encrypted = await crypto.subtle.encrypt(
-                    {
-                        name: 'AES-GCM',
-                        iv: iv
-                    },
+                    { name: 'AES-GCM', iv: iv },
                     aesKey,
                     encodedText
                 );
@@ -404,21 +438,15 @@
         // Расшифровка сообщения
         async function decryptMessage(encryptedBase64, ivBase64, senderPublicKeyBase64) {
             try {
-                const senderPublicKey = await importPublicKey(senderPublicKeyBase64);
-                if (!senderPublicKey) throw new Error('Не удалось импортировать ключ отправителя');
-                
-                const aesKey = await deriveSharedSecret(myPrivateKey, senderPublicKey);
-                if (!aesKey) throw new Error('Не удалось вычислить общий ключ');
+                const aesKey = await getSharedKey(senderPublicKeyBase64);
+                if (!aesKey) throw new Error('Не удалось получить общий ключ');
                 
                 const encrypted = base64ToArrayBuffer(encryptedBase64);
                 const iv = new Uint8Array(base64ToArrayBuffer(ivBase64));
                 
                 // Расшифровка
                 const decrypted = await crypto.subtle.decrypt(
-                    {
-                        name: 'AES-GCM',
-                        iv: iv
-                    },
+                    { name: 'AES-GCM', iv: iv },
                     aesKey,
                     encrypted
                 );
@@ -444,18 +472,6 @@
                 console.log('✅ Публичный ключ зарегистрирован');
             } catch (err) {
                 console.error('❌ Ошибка регистрации ключа:', err);
-            }
-        }
-
-        // Получение публичного ключа пользователя
-        async function getPublicKey(username) {
-            try {
-                const response = await fetch(`/keys/get?username=${username}`);
-                const data = await response.json();
-                return data.public_key || null;
-            } catch (err) {
-                console.error('❌ Ошибка получения ключа:', err);
-                return null;
             }
         }
 
@@ -490,8 +506,8 @@
                     document.getElementById('authScreen').classList.add('hidden');
                     document.getElementById('app').classList.add('active');
                     
-                    showToast('Генерация ключей шифрования...', 'info');
-                    await generateKeyPair();
+                    showToast('Инициализация шифрования...', 'info');
+                    await loadOrGenerateKeyPair();
                     await registerPublicKey();
                     showToast('Шифрование готово 🔒', 'success');
                     
@@ -503,6 +519,7 @@
         function logout() { 
             if (peer) peer.destroy();
             localStorage.removeItem('messenger_username');
+            localStorage.removeItem('e2e_keypair_' + currentUser);
             location.reload(); 
         }
 
@@ -531,6 +548,7 @@
                                 userPublicKeys[u.username] = u.public_key;
                             }
                         });
+                        userPublicKeys[currentUser] = myPublicKeyBase64;
                         updateUserList(data.users.map(u => u.username));
                     }
                     return;
@@ -599,7 +617,7 @@
                 document.getElementById('authScreen').classList.add('hidden'); 
                 document.getElementById('app').classList.add('active'); 
                 
-                await generateKeyPair();
+                await loadOrGenerateKeyPair();
                 await registerPublicKey();
                 connectWebSocket();
             }
