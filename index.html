@@ -238,7 +238,7 @@
         </div>
     </div>
 
-        <script>
+            <script>
         var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
         var isRegisterMode = false, statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
@@ -249,7 +249,7 @@
         let myPublicKey = null;
         let myPublicKeyBase64 = null;
         let userPublicKeys = {};
-        let sharedKeysCache = {}; // Кэш общих ключей для скорости
+        let sharedKeysCache = {};
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
@@ -270,7 +270,7 @@
             }, duration);
         }
 
-        // ==================== E2E ШИФРОВАНИЕ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ====================
+        // ==================== E2E ШИФРОВАНИЕ ====================
         
         function arrayBufferToBase64(buffer) {
             let binary = '';
@@ -299,7 +299,13 @@
                 try {
                     const parsed = JSON.parse(savedKeys);
                     
-                    // Импортируем приватный ключ из JWK
+                    // Валидация JWK
+                    if (!parsed.privateKey || !parsed.privateKey.kty || !parsed.publicKey) {
+                        console.warn('⚠️ Битый JWK, генерируем новые ключи');
+                        localStorage.removeItem(storageKey);
+                        return await loadOrGenerateKeyPair();
+                    }
+                    
                     myPrivateKey = await crypto.subtle.importKey(
                         'jwk',
                         parsed.privateKey,
@@ -308,7 +314,6 @@
                         ['deriveKey', 'deriveBits']
                     );
                     
-                    // Импортируем публичный ключ из SPKI
                     const publicKeyBuffer = base64ToArrayBuffer(parsed.publicKey);
                     myPublicKey = await crypto.subtle.importKey(
                         'spki',
@@ -322,13 +327,12 @@
                     console.log('✅ Ключи загружены из localStorage');
                     return true;
                 } catch(e) {
-                    console.warn('Ошибка загрузки ключей, генерируем новые:', e);
+                    console.warn('Ошибка загрузки ключей:', e);
                     localStorage.removeItem(storageKey);
                     return await loadOrGenerateKeyPair();
                 }
             } else {
                 try {
-                    // Генерация новой пары ключей
                     const keyPair = await crypto.subtle.generateKey(
                         { name: 'ECDH', namedCurve: 'P-256' },
                         true,
@@ -338,14 +342,11 @@
                     myPrivateKey = keyPair.privateKey;
                     myPublicKey = keyPair.publicKey;
                     
-                    // Экспорт публичного ключа в SPKI -> Base64
                     const exportedPublicKey = await crypto.subtle.exportKey('spki', myPublicKey);
                     myPublicKeyBase64 = arrayBufferToBase64(exportedPublicKey);
                     
-                    // Экспорт приватного ключа в JWK
                     const exportedPrivateKey = await crypto.subtle.exportKey('jwk', myPrivateKey);
                     
-                    // Сохраняем в localStorage
                     localStorage.setItem(storageKey, JSON.stringify({
                         publicKey: myPublicKeyBase64,
                         privateKey: exportedPrivateKey
@@ -360,25 +361,22 @@
             }
         }
 
-        // Импорт публичного ключа из Base64
         async function importPublicKey(base64Key) {
             try {
                 const keyBuffer = base64ToArrayBuffer(base64Key);
-                const publicKey = await crypto.subtle.importKey(
+                return await crypto.subtle.importKey(
                     'spki',
                     keyBuffer,
                     { name: 'ECDH', namedCurve: 'P-256' },
                     true,
                     []
                 );
-                return publicKey;
             } catch (err) {
                 console.error('❌ Ошибка импорта ключа:', err);
                 return null;
             }
         }
 
-        // Получение общего AES ключа (с кэшированием)
         async function getSharedKey(otherPublicKeyBase64) {
             if (sharedKeysCache[otherPublicKeyBase64]) {
                 return sharedKeysCache[otherPublicKeyBase64];
@@ -388,12 +386,8 @@
                 const otherPublicKey = await importPublicKey(otherPublicKeyBase64);
                 if (!otherPublicKey) throw new Error('Не удалось импортировать ключ');
                 
-                // ECDH + deriveKey напрямую в AES-GCM
                 const aesKey = await crypto.subtle.deriveKey(
-                    {
-                        name: 'ECDH',
-                        public: otherPublicKey
-                    },
+                    { name: 'ECDH', public: otherPublicKey },
                     myPrivateKey,
                     { name: 'AES-GCM', length: 256 },
                     false,
@@ -408,16 +402,12 @@
             }
         }
 
-        // Шифрование сообщения
         async function encryptMessage(text, recipientPublicKeyBase64) {
             try {
                 const aesKey = await getSharedKey(recipientPublicKeyBase64);
                 if (!aesKey) throw new Error('Не удалось получить общий ключ');
                 
-                // Генерация случайного IV (12 байт для GCM)
                 const iv = crypto.getRandomValues(new Uint8Array(12));
-                
-                // Шифрование
                 const encodedText = new TextEncoder().encode(text);
                 const encrypted = await crypto.subtle.encrypt(
                     { name: 'AES-GCM', iv: iv },
@@ -435,7 +425,6 @@
             }
         }
 
-        // Расшифровка сообщения
         async function decryptMessage(encryptedBase64, ivBase64, senderPublicKeyBase64) {
             try {
                 const aesKey = await getSharedKey(senderPublicKeyBase64);
@@ -444,7 +433,6 @@
                 const encrypted = base64ToArrayBuffer(encryptedBase64);
                 const iv = new Uint8Array(base64ToArrayBuffer(ivBase64));
                 
-                // Расшифровка
                 const decrypted = await crypto.subtle.decrypt(
                     { name: 'AES-GCM', iv: iv },
                     aesKey,
@@ -458,7 +446,6 @@
             }
         }
 
-        // Регистрация публичного ключа на сервере
         async function registerPublicKey() {
             try {
                 await fetch('/keys/register', {
@@ -473,6 +460,26 @@
             } catch (err) {
                 console.error('❌ Ошибка регистрации ключа:', err);
             }
+        }
+
+        // ==================== ЛОКАЛЬНЫЙ КЭШ СООБЩЕНИЙ ====================
+        
+        function saveMessageToCache(chatId, messageId, text) {
+            const cacheKey = `msg_cache_${currentUser}_${chatId}`;
+            const cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+            cache[messageId] = text;
+            localStorage.setItem(cacheKey, JSON.stringify(cache));
+        }
+
+        function getMessageFromCache(chatId, messageId) {
+            const cacheKey = `msg_cache_${currentUser}_${chatId}`;
+            const cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+            return cache[messageId] || null;
+        }
+
+        function clearMessageCache(chatId) {
+            const cacheKey = `msg_cache_${currentUser}_${chatId}`;
+            localStorage.removeItem(cacheKey);
         }
 
         // ==================== AUTH & WS ====================
@@ -520,6 +527,12 @@
             if (peer) peer.destroy();
             localStorage.removeItem('messenger_username');
             localStorage.removeItem('e2e_keypair_' + currentUser);
+            // Очищаем кэш сообщений
+            Object.keys(localStorage).forEach(key => {
+                if (key.startsWith(`msg_cache_${currentUser}_`)) {
+                    localStorage.removeItem(key);
+                }
+            });
             location.reload(); 
         }
 
@@ -559,21 +572,36 @@
                     if (currentChat === partner) {
                         let text = data.text;
                         let isEncrypted = false;
+                        const messageId = data.message_id || Date.now();
+                        
                         if (data.encrypted_message) {
-                            try {
-                                const enc = JSON.parse(data.encrypted_message);
-                                const senderKey = userPublicKeys[data.username];
-                                if (senderKey) {
-                                    text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
-                                    isEncrypted = true;
+                            if (data.username === currentUser) {
+                                // Свои сообщения - берём из локального кэша
+                                const cached = getMessageFromCache(partner, messageId);
+                                if (cached) {
+                                    text = cached;
                                 } else {
-                                    text = '[Ключ отправителя не получен]';
+                                    text = '[Зашифровано]';
                                 }
-                            } catch(err) {
-                                console.error('Decryption failed:', err);
-                                text = '[Ошибка расшифровки]';
+                                isEncrypted = true;
+                            } else {
+                                // Чужие сообщения - расшифровываем через ECDH
+                                try {
+                                    const enc = JSON.parse(data.encrypted_message);
+                                    const senderKey = userPublicKeys[data.username];
+                                    if (senderKey) {
+                                        text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
+                                        isEncrypted = true;
+                                    } else {
+                                        text = '[Ключ отправителя не получен]';
+                                    }
+                                } catch(err) {
+                                    console.error('Decryption failed:', err);
+                                    text = '[Ошибка расшифровки]';
+                                }
                             }
                         }
+                        
                         addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, isEncrypted);
                     }
                 } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
@@ -671,21 +699,36 @@
                 for (const m of data) { 
                     let text = m.text; 
                     let isEncrypted = false;
+                    const messageId = m.message_id || m.id;
+                    
                     if (m.encrypted_message) {
-                        try {
-                            const enc = JSON.parse(m.encrypted_message);
-                            const senderKey = userPublicKeys[m.sender];
-                            if (senderKey) {
-                                text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
-                                isEncrypted = true;
+                        if (m.sender === currentUser) {
+                            // Свои сообщения - берём из локального кэша
+                            const cached = getMessageFromCache(p, messageId);
+                            if (cached) {
+                                text = cached;
                             } else {
-                                text = '[Ключ не получен]';
+                                text = '[Зашифровано]';
                             }
-                        } catch(err) {
-                            console.error('Decryption failed:', err);
-                            text = '[Ошибка расшифровки]';
+                            isEncrypted = true;
+                        } else {
+                            // Чужие сообщения - расшифровываем через ECDH
+                            try {
+                                const enc = JSON.parse(m.encrypted_message);
+                                const senderKey = userPublicKeys[m.sender];
+                                if (senderKey) {
+                                    text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
+                                    isEncrypted = true;
+                                } else {
+                                    text = '[Ключ не получен]';
+                                }
+                            } catch(err) {
+                                console.error('Decryption failed:', err);
+                                text = '[Ошибка расшифровки]';
+                            }
                         }
                     }
+                    
                     addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, isEncrypted); 
                 } 
             } 
@@ -755,6 +798,10 @@
                             const encrypted = await encryptMessage(e.target.result, recipientKey);
                             msg.encrypted_message = JSON.stringify(encrypted);
                             msg.text = '[Зашифровано]';
+                            // Сохраняем расшифрованную версию в кэш
+                            const messageId = Date.now();
+                            saveMessageToCache(currentChat, messageId, e.target.result);
+                            msg.message_id = messageId;
                         } else {
                             showToast('Ключ получателя не получен', 'error');
                             return;
@@ -784,6 +831,10 @@
                         const encrypted = await encryptMessage(input.value, recipientKey);
                         msg.encrypted_message = JSON.stringify(encrypted);
                         msg.text = '[Зашифровано]';
+                        // Сохраняем расшифрованную версию в кэш
+                        const messageId = Date.now();
+                        saveMessageToCache(currentChat, messageId, input.value);
+                        msg.message_id = messageId;
                     } else {
                         showToast('Ключ получателя не получен', 'error');
                         return;
