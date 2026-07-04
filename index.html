@@ -174,7 +174,8 @@
                 <h2>Чаты</h2>
                 <div class="sidebar-actions">
                     <button class="icon-btn" onclick="showCreateGroupModal()" title="Создать группу"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
-                    <button class="icon-btn" onclick="clearAllData()" title="Очистить все данные"><svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
+                    <button class="icon-btn" onclick="clearAllData()" title="Сбросить ключи (сообщения останутся)"><svg viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg></button>
+                    <button class="icon-btn" onclick="clearAllDataWithCache()" title="Удалить всё (ключи + кэш)"><svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></button>
                     <button class="icon-btn" onclick="logout()" title="Выйти"><svg viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg></button>
                 </div>
             </div>
@@ -250,7 +251,7 @@
         </div>
     </div>
 
-        <script>
+            <script>
         var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
         var isRegisterMode = false, statusTimer;
         let localStream, currentCall = null, currentCallTarget = '';
@@ -262,7 +263,6 @@
         let myPublicKeyBase64 = null;
         let userPublicKeys = {};
         let sharedKeysCache = {};
-        let keyVersion = 1; // Версия ключей для отслеживания смены
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
@@ -309,7 +309,6 @@
             return arrayBufferToBase64(hashBuffer);
         }
 
-        // Загрузка или генерация ключевой пары
         async function loadOrGenerateKeyPair() {
             const storageKey = 'e2e_keypair_' + currentUser;
             const savedKeys = localStorage.getItem(storageKey);
@@ -342,8 +341,7 @@
                     );
                     
                     myPublicKeyBase64 = parsed.publicKey;
-                    keyVersion = parsed.keyVersion || 1;
-                    console.log('✅ Ключи загружены из localStorage (версия: ' + keyVersion + ')');
+                    console.log('✅ Ключи загружены из localStorage');
                     console.log('🔑 Публичный ключ:', myPublicKeyBase64.substring(0, 20) + '...');
                     return true;
                 } catch(e) {
@@ -367,14 +365,12 @@
                     
                     const exportedPrivateKey = await crypto.subtle.exportKey('jwk', myPrivateKey);
                     
-                    keyVersion = 1;
                     localStorage.setItem(storageKey, JSON.stringify({
                         publicKey: myPublicKeyBase64,
-                        privateKey: exportedPrivateKey,
-                        keyVersion: keyVersion
+                        privateKey: exportedPrivateKey
                     }));
                     
-                    console.log('🔑 Новые ключи сгенерированы (версия: ' + keyVersion + ')');
+                    console.log('🔑 Новые ключи сгенерированы и сохранены');
                     console.log('🔑 Публичный ключ:', myPublicKeyBase64.substring(0, 20) + '...');
                     return true;
                 } catch (err) {
@@ -447,8 +443,7 @@
                 
                 return {
                     encrypted: arrayBufferToBase64(encrypted),
-                    iv: arrayBufferToBase64(iv),
-                    key_version: keyVersion
+                    iv: arrayBufferToBase64(iv)
                 };
             } catch (err) {
                 console.error('❌ Ошибка шифрования:', err);
@@ -456,7 +451,7 @@
             }
         }
 
-        async function decryptMessage(encryptedBase64, ivBase64, senderPublicKeyBase64, messageKeyVersion = 1) {
+        async function decryptMessage(encryptedBase64, ivBase64, senderPublicKeyBase64) {
             try {
                 const aesKey = await getSharedKey(senderPublicKeyBase64);
                 if (!aesKey) throw new Error('Не удалось получить общий ключ');
@@ -473,7 +468,6 @@
                 return new TextDecoder().decode(decrypted);
             } catch (err) {
                 console.error('❌ Ошибка расшифровки:', err);
-                // Возвращаем специальный маркер для старых сообщений
                 return '__KEY_MISMATCH__';
             }
         }
@@ -485,17 +479,17 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         username: currentUser,
-                        public_key: myPublicKeyBase64,
-                        key_version: keyVersion
+                        public_key: myPublicKeyBase64
                     })
                 });
-                console.log('✅ Публичный ключ зарегистрирован (версия: ' + keyVersion + ')');
+                console.log('✅ Публичный ключ зарегистрирован');
             } catch (err) {
                 console.error('❌ Ошибка регистрации ключа:', err);
             }
         }
 
         // ==================== ЛОКАЛЬНЫЙ КЭШ СООБЩЕНИЙ ====================
+        // ИСПРАВЛЕНО: Кэшируем ВСЕ сообщения (и входящие, и исходящие)
         
         async function saveMessageToCache(chatId, encryptedBase64, originalText) {
             const cacheKey = `msg_cache_${currentUser}_${chatId}`;
@@ -553,6 +547,7 @@
             } catch (err) { errorDiv.textContent = 'Ошибка соединения'; }
         }
 
+        // ИСПРАВЛЕНО: При очистке удаляем ТОЛЬКО ключи, кэш сообщений остаётся!
         function logout() { 
             if (peer) peer.destroy();
             localStorage.removeItem('messenger_username');
@@ -560,14 +555,24 @@
         }
 
         function clearAllData() {
-            if (confirm('⚠️ Это удалит ВСЕ ваши данные:\n- Ключи шифрования\n- Кэш сообщений\n- Настройки\n\nСтарые сообщения станут недоступны для расшифровки.\n\nПродолжить?')) {
-                Object.keys(localStorage).forEach(key => {
-                    if (key.startsWith('e2e_keypair_' + currentUser) || 
-                        key.startsWith('msg_cache_' + currentUser + '_')) {
-                        localStorage.removeItem(key);
-                    }
-                });
+            if (confirm('⚠️ Это удалит ваши ключи шифрования.\n\nРасшифрованные сообщения останутся в кэше и будут доступны.\n\nПродолжить?')) {
+                // Удаляем ТОЛЬКО ключи, кэш сообщений остаётся!
+                localStorage.removeItem('e2e_keypair_' + currentUser);
                 logout();
+            }
+        }
+
+        function clearAllDataWithCache() {
+            if (confirm('⚠️ ВНИМАНИЕ: Это удалит ВСЁ:\n- Ключи шифрования\n- Кэш расшифрованных сообщений\n\nПосле этого старые сообщения у собеседника станут недоступны для расшифровки.\n\nВы уверены?')) {
+                if (confirm('Это действие необратимо. Продолжить?')) {
+                    Object.keys(localStorage).forEach(key => {
+                        if (key.startsWith('e2e_keypair_' + currentUser) || 
+                            key.startsWith('msg_cache_' + currentUser + '_')) {
+                            localStorage.removeItem(key);
+                        }
+                    });
+                    logout();
+                }
             }
         }
 
@@ -613,33 +618,34 @@
                             try {
                                 const enc = JSON.parse(data.encrypted_message);
                                 
-                                if (data.username === currentUser) {
-                                    const cached = await getMessageFromCache(partner, enc.encrypted);
-                                    if (cached) {
-                                        text = cached;
-                                    } else {
-                                        text = '[Зашифровано — кэш недоступен]';
-                                        isOldMessage = true;
-                                    }
+                                // ВСЕГДА сначала проверяем кэш (для входящих и исходящих)
+                                const cached = await getMessageFromCache(partner, enc.encrypted);
+                                
+                                if (cached) {
+                                    // Нашли в кэше — показываем расшифрованную версию
+                                    text = cached;
+                                    isEncrypted = true;
                                 } else {
+                                    // Не нашли в кэше — пытаемся расшифровать
                                     const senderKey = userPublicKeys[data.username];
                                     if (senderKey) {
-                                        const decrypted = await decryptMessage(enc.encrypted, enc.iv, senderKey, enc.key_version);
+                                        const decrypted = await decryptMessage(enc.encrypted, enc.iv, senderKey);
                                         if (decrypted === '__KEY_MISMATCH__') {
                                             text = '[Сообщение зашифровано старым ключом]';
                                             isOldMessage = true;
                                         } else {
                                             text = decrypted;
+                                            // Сохраняем в кэш для будущего использования
+                                            await saveMessageToCache(partner, enc.encrypted, decrypted);
                                         }
                                     } else {
                                         text = '[Ключ отправителя не получен]';
                                     }
+                                    isEncrypted = true;
                                 }
-                                isEncrypted = true;
                             } catch(err) {
                                 console.error('❌ Decryption failed:', err);
-                                text = '[Сообщение зашифровано старым ключом]';
-                                isOldMessage = true;
+                                text = '[Ошибка расшифровки]';
                                 isEncrypted = true;
                             }
                         }
@@ -735,10 +741,10 @@
             }); 
         }
         
+        // ИСПРАВЛЕНО: Кэшируем ВСЕ расшифрованные сообщения
         async function loadPrivateHistory(p) { 
             const data = await fetch('/private_history?user1='+currentUser+'&user2='+p).then(r=>r.json());
             if (data) { 
-                let hasOldMessages = false;
                 for (const m of data) { 
                     let text = m.text; 
                     let isEncrypted = false;
@@ -748,46 +754,40 @@
                         try {
                             const enc = JSON.parse(m.encrypted_message);
                             
-                            if (m.sender === currentUser) {
-                                const cached = await getMessageFromCache(p, enc.encrypted);
-                                if (cached) {
-                                    text = cached;
-                                } else {
-                                    text = '[Зашифровано — кэш недоступен]';
-                                    isOldMessage = true;
-                                }
+                            // ВСЕГДА сначала проверяем кэш (для входящих и исходящих)
+                            const cached = await getMessageFromCache(p, enc.encrypted);
+                            
+                            if (cached) {
+                                // Нашли в кэше — показываем расшифрованную версию
+                                text = cached;
+                                isEncrypted = true;
                             } else {
+                                // Не нашли в кэше — пытаемся расшифровать
                                 const senderKey = userPublicKeys[m.sender];
                                 if (senderKey) {
-                                    const decrypted = await decryptMessage(enc.encrypted, enc.iv, senderKey, enc.key_version);
+                                    const decrypted = await decryptMessage(enc.encrypted, enc.iv, senderKey);
                                     if (decrypted === '__KEY_MISMATCH__') {
                                         text = '[Сообщение зашифровано старым ключом]';
                                         isOldMessage = true;
-                                        hasOldMessages = true;
                                     } else {
                                         text = decrypted;
+                                        // Сохраняем в кэш для будущего использования
+                                        await saveMessageToCache(p, enc.encrypted, decrypted);
                                     }
                                 } else {
                                     text = '[Ключ не получен]';
                                 }
+                                isEncrypted = true;
                             }
-                            isEncrypted = true;
                         } catch(err) {
                             console.error('❌ Decryption failed:', err);
-                            text = '[Сообщение зашифровано старым ключом]';
-                            isOldMessage = true;
-                            hasOldMessages = true;
+                            text = '[Ошибка расшифровки]';
                             isEncrypted = true;
                         }
                     }
                     
                     addMessageToUI(m.sender, text, m.image, m.file_name, m.sender === currentUser, isEncrypted, isOldMessage); 
-                }
-                
-                // Показываем уведомление, если есть старые сообщения
-                if (hasOldMessages) {
-                    showToast('⚠️ Собеседник обновил ключи шифрования. Старые сообщения недоступны.', 'warning', 5000);
-                }
+                } 
             } 
         }
         
@@ -859,6 +859,7 @@
                             const encrypted = await encryptMessage(e.target.result, recipientKey);
                             msg.encrypted_message = JSON.stringify(encrypted);
                             msg.text = '[Зашифровано]';
+                            // Сохраняем в кэш
                             await saveMessageToCache(currentChat, encrypted.encrypted, e.target.result);
                         } else {
                             showToast('Ключ получателя не получен', 'error');
@@ -889,6 +890,7 @@
                         const encrypted = await encryptMessage(input.value, recipientKey);
                         msg.encrypted_message = JSON.stringify(encrypted);
                         msg.text = '[Зашифровано]';
+                        // Сохраняем в кэш
                         await saveMessageToCache(currentChat, encrypted.encrypted, input.value);
                     } else {
                         showToast('Ключ получателя не получен', 'error');
