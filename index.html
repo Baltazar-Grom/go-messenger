@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Go Мессенджер (Signal Protocol)</title>
-    <script src="https://cdn.jsdelivr.net/npm/libsignal-protocol-javascript@2.0.1/dist/libsignal-protocol.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@privacyresearch/libsignal-protocol-typescript@0.0.16/dist/libsignal-protocol.min.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -375,6 +375,13 @@
         }
 
         async function initSignalProtocol() {
+            // Проверяем, что библиотека загружена
+            if (typeof libsignal === 'undefined') {
+                console.error('❌ Библиотека libsignal не загружена');
+                showToast('Ошибка загрузки библиотеки шифрования', 'error');
+                return;
+            }
+
             signalStore = new SignalKeyStore(currentUser);
             
             if (signalStore.getIdentityKeyPair()) {
@@ -386,13 +393,11 @@
             console.log('🔑 Генерация Signal Protocol ключей...');
             
             try {
-                // Генерация ключей
                 const keys = libsignal.KeyHelper.generateIdentityKeyPair();
                 const registrationId = libsignal.KeyHelper.generateRegistrationId();
                 const preKeys = await libsignal.KeyHelper.generatePreKeys(1, 100);
                 const signedPreKey = await libsignal.KeyHelper.generateSignedPreKey(keys, 1);
 
-                // Сохранение в store
                 signalStore.data.identityKey = {
                     pubKey: signalStore._arrayBufferToBase64(keys.pubKey),
                     privKey: signalStore._arrayBufferToBase64(keys.privKey)
@@ -406,7 +411,6 @@
                 signalStore.putSignedPreKey(signedPreKey.keyId, signedPreKey.keyPair);
                 signalStore.save();
 
-                // Регистрация на сервере
                 await registerKeysOnServer(keys, registrationId, preKeys, signedPreKey);
                 
                 signalInitialized = true;
@@ -427,7 +431,6 @@
                 return btoa(binary);
             };
 
-            // Identity key
             await fetch('/signal/register_identity', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -438,7 +441,6 @@
                 })
             });
 
-            // Signed prekey
             await fetch('/signal/register_signed_prekey', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -450,7 +452,6 @@
                 })
             });
 
-            // One-time prekeys
             const preKeysData = preKeys.map(pk => ({
                 key_id: pk.keyId,
                 public_key: arrayBufferToBase64(pk.keyPair.pubKey)
@@ -469,13 +470,11 @@
         async function encryptForUser(recipientUsername, message) {
             if (!signalInitialized) throw new Error('Signal Protocol не инициализирован');
 
-            // Получаем prekey bundle получателя
             const response = await fetch(`/signal/get_prekey_bundle?username=${recipientUsername}`);
             const bundle = await response.json();
 
             if (bundle.error) throw new Error(bundle.error);
 
-            // Строим сессию
             const address = new libsignal.SignalProtocolAddress(recipientUsername, 1);
             const sessionBuilder = new libsignal.SessionBuilder(signalStore, address);
             
@@ -494,7 +493,6 @@
 
             await sessionBuilder.processPreKeyBundle(preKeyBundle);
 
-            // Шифруем сообщение
             const sessionCipher = new libsignal.SessionCipher(signalStore, address);
             const ciphertext = await sessionCipher.encrypt(message);
 
@@ -512,9 +510,9 @@
             const sessionCipher = new libsignal.SessionCipher(signalStore, address);
 
             let plaintext;
-            if (ciphertext.type === 3) { // PreKeyWhisperMessage
+            if (ciphertext.type === 3) {
                 plaintext = await sessionCipher.decryptPreKeyWhisperMessage(ciphertext.body, 'base64');
-            } else { // WhisperMessage
+            } else {
                 plaintext = await sessionCipher.decryptWhisperMessage(ciphertext.body, 'base64');
             }
 
