@@ -18,9 +18,8 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	Conn      *websocket.Conn
-	Username  string
-	PublicKey string
+	Conn     *websocket.Conn
+	Username string
 }
 
 var clients = make(map[*websocket.Conn]*Client)
@@ -39,7 +38,6 @@ type Message struct {
 	Receiver         string   `json:"receiver,omitempty"`
 	GroupID          int      `json:"group_id,omitempty"`
 	GroupName        string   `json:"group_name,omitempty"`
-	PublicKey        string   `json:"public_key,omitempty"`
 	EncryptedMessage string   `json:"encrypted_message,omitempty"`
 }
 
@@ -73,6 +71,8 @@ func initDB() {
 	db.Exec(`CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, creator TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
+
+	// Signal Protocol tables
 	db.Exec(`CREATE TABLE IF NOT EXISTS identity_keys (username TEXT PRIMARY KEY, identity_key TEXT NOT NULL, registration_id INTEGER NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS signed_prekeys (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, key_id INTEGER NOT NULL, public_key TEXT NOT NULL, signature TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(username, key_id))`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS one_time_prekeys (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, key_id INTEGER NOT NULL, public_key TEXT NOT NULL, used INTEGER DEFAULT 0, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(username, key_id))`)
@@ -156,6 +156,10 @@ func groupsHandler(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&id, &name)
 		groups = append(groups, map[string]interface{}{"id": id, "name": name})
 	}
+	if err := rows.Err(); err != nil {
+		json.NewEncoder(w).Encode([]map[string]interface{}{})
+		return
+	}
 	json.NewEncoder(w).Encode(groups)
 }
 
@@ -169,6 +173,10 @@ func availableGroupsHandler(w http.ResponseWriter, r *http.Request) {
 		var name string
 		rows.Scan(&id, &name)
 		groups = append(groups, map[string]interface{}{"id": id, "name": name})
+	}
+	if err := rows.Err(); err != nil {
+		json.NewEncoder(w).Encode([]map[string]interface{}{})
+		return
 	}
 	json.NewEncoder(w).Encode(groups)
 }
@@ -194,11 +202,17 @@ func groupHistoryHandler(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&u, &t, &img, &fn)
 		history = append(history, map[string]interface{}{"username": u, "text": t, "image": img, "file_name": fn})
 	}
+	if err := rows.Err(); err != nil {
+		json.NewEncoder(w).Encode([]map[string]interface{}{})
+		return
+	}
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
 		history[i], history[j] = history[j], history[i]
 	}
 	json.NewEncoder(w).Encode(history)
 }
+
+// Signal Protocol API endpoints
 
 func registerIdentityKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -312,7 +326,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := regMsg.Username
-	client := &Client{Conn: conn, Username: username, PublicKey: regMsg.PublicKey}
+	client := &Client{Conn: conn, Username: username}
 
 	mutex.Lock()
 	clients[conn] = client
@@ -339,14 +353,6 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if msg.Type == "webrtc" && msg.Receiver != "" {
 			handleWebRTC(msg)
-			continue
-		}
-		if msg.Type == "set_public_key" {
-			mutex.Lock()
-			if c, ok := clients[conn]; ok {
-				c.PublicKey = msg.PublicKey
-			}
-			mutex.Unlock()
 			continue
 		}
 		if msg.Type == "group_message" && msg.GroupID != 0 {
@@ -406,6 +412,9 @@ func handleGroupMessage(msg Message) {
 		rows.Scan(&u)
 		members = append(members, u)
 	}
+	if err := rows.Err(); err != nil {
+		return
+	}
 	for conn, client := range clients {
 		for _, member := range members {
 			if client.Username == member {
@@ -419,26 +428,13 @@ func handleGroupMessage(msg Message) {
 func sendUserList() {
 	mutex.Lock()
 	defer mutex.Unlock()
-
-	type UserWithKey struct {
-		Username  string `json:"username"`
-		PublicKey string `json:"public_key"`
-	}
-	var usersWithKeys []UserWithKey
+	var users []string
 	for _, client := range clients {
-		usersWithKeys = append(usersWithKeys, UserWithKey{
-			Username:  client.Username,
-			PublicKey: client.PublicKey,
-		})
+		users = append(users, client.Username)
 	}
-
-	jsonData, _ := json.Marshal(map[string]interface{}{
-		"type":  "user_list",
-		"users": usersWithKeys,
-	})
-
+	msg := Message{Type: "user_list", Users: users}
 	for conn := range clients {
-		conn.WriteMessage(websocket.TextMessage, jsonData)
+		conn.WriteJSON(msg)
 	}
 }
 
@@ -469,6 +465,10 @@ func historyHandler(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&u, &t, &img, &fn)
 		history = append(history, map[string]interface{}{"username": u, "text": t, "image": img, "file_name": fn})
 	}
+	if err := rows.Err(); err != nil {
+		json.NewEncoder(w).Encode([]map[string]interface{}{})
+		return
+	}
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
 		history[i], history[j] = history[j], history[i]
 	}
@@ -488,9 +488,11 @@ func privateHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s, t, img, fn, enc string
 		rows.Scan(&s, &t, &img, &fn, &enc)
-		history = append(history, map[string]interface{}{
-			"sender": s, "text": t, "image": img, "file_name": fn, "encrypted_message": enc,
-		})
+		history = append(history, map[string]interface{}{"sender": s, "text": t, "image": img, "file_name": fn, "encrypted_message": enc})
+	}
+	if err := rows.Err(); err != nil {
+		json.NewEncoder(w).Encode([]map[string]interface{}{})
+		return
 	}
 	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
 		history[i], history[j] = history[j], history[i]
@@ -517,6 +519,8 @@ func main() {
 	http.HandleFunc("/available_groups", availableGroupsHandler)
 	http.HandleFunc("/join_group", joinGroupHandler)
 	http.HandleFunc("/group_history", groupHistoryHandler)
+
+	// Signal Protocol endpoints
 	http.HandleFunc("/signal/register_identity", registerIdentityKeyHandler)
 	http.HandleFunc("/signal/register_signed_prekey", registerSignedPreKeyHandler)
 	http.HandleFunc("/signal/register_one_time_prekeys", registerOneTimePreKeysHandler)
