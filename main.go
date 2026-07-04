@@ -18,8 +18,9 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	Conn     *websocket.Conn
-	Username string
+	Conn      *websocket.Conn
+	Username  string
+	PublicKey string // Base64-encoded публичный ключ ECDH
 }
 
 var clients = make(map[*websocket.Conn]*Client)
@@ -38,6 +39,7 @@ type Message struct {
 	Receiver         string   `json:"receiver,omitempty"`
 	GroupID          int      `json:"group_id,omitempty"`
 	GroupName        string   `json:"group_name,omitempty"`
+	PublicKey        string   `json:"public_key,omitempty"`
 	EncryptedMessage string   `json:"encrypted_message,omitempty"`
 }
 
@@ -71,12 +73,6 @@ func initDB() {
 	db.Exec(`CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, creator TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_members (group_id INTEGER, username TEXT, PRIMARY KEY (group_id, username))`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS group_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, username TEXT, text TEXT, image TEXT, file_name TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
-
-	// Signal Protocol tables
-	db.Exec(`CREATE TABLE IF NOT EXISTS identity_keys (username TEXT PRIMARY KEY, identity_key TEXT NOT NULL, registration_id INTEGER NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS signed_prekeys (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, key_id INTEGER NOT NULL, public_key TEXT NOT NULL, signature TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(username, key_id))`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS one_time_prekeys (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, key_id INTEGER NOT NULL, public_key TEXT NOT NULL, used INTEGER DEFAULT 0, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(username, key_id))`)
-	db.Exec(`CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, recipient TEXT NOT NULL, session_record TEXT NOT NULL, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(username, recipient))`)
 
 	db.Exec("ALTER TABLE messages ADD COLUMN image TEXT DEFAULT ''")
 	db.Exec("ALTER TABLE private_messages ADD COLUMN image TEXT DEFAULT ''")
@@ -212,106 +208,48 @@ func groupHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(history)
 }
 
-// Signal Protocol API endpoints
+// ==================== E2E КЛЮЧИ ====================
 
-func registerIdentityKeyHandler(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username       string `json:"username"`
-		IdentityKey    string `json:"identity_key"`
-		RegistrationID int    `json:"registration_id"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	db.Exec("INSERT OR REPLACE INTO identity_keys (username, identity_key, registration_id) VALUES (?, ?, ?)",
-		req.Username, req.IdentityKey, req.RegistrationID)
-	json.NewEncoder(w).Encode(AuthResponse{Success: true})
-}
-
-func registerSignedPreKeyHandler(w http.ResponseWriter, r *http.Request) {
+func registerPublicKeyHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username  string `json:"username"`
-		KeyID     int    `json:"key_id"`
 		PublicKey string `json:"public_key"`
-		Signature string `json:"signature"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
-	db.Exec("INSERT OR REPLACE INTO signed_prekeys (username, key_id, public_key, signature) VALUES (?, ?, ?, ?)",
-		req.Username, req.KeyID, req.PublicKey, req.Signature)
+	if req.Username == "" || req.PublicKey == "" {
+		json.NewEncoder(w).Encode(AuthResponse{Success: false, Message: "Missing fields"})
+		return
+	}
+	// Сохраняем в памяти (для онлайн-пользователей)
+	mutex.Lock()
+	for _, client := range clients {
+		if client.Username == req.Username {
+			client.PublicKey = req.PublicKey
+			break
+		}
+	}
+	mutex.Unlock()
 	json.NewEncoder(w).Encode(AuthResponse{Success: true})
 }
 
-func registerOneTimePreKeysHandler(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username string `json:"username"`
-		PreKeys  []struct {
-			KeyID     int    `json:"key_id"`
-			PublicKey string `json:"public_key"`
-		} `json:"pre_keys"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	for _, pk := range req.PreKeys {
-		db.Exec("INSERT OR IGNORE INTO one_time_prekeys (username, key_id, public_key) VALUES (?, ?, ?)",
-			req.Username, pk.KeyID, pk.PublicKey)
-	}
-	json.NewEncoder(w).Encode(AuthResponse{Success: true})
-}
-
-func getPreKeyBundleHandler(w http.ResponseWriter, r *http.Request) {
+func getPublicKeyHandler(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
-	var identityKey string
-	var registrationID int
-	err := db.QueryRow("SELECT identity_key, registration_id FROM identity_keys WHERE username = ?", username).Scan(&identityKey, &registrationID)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"error": "User not found"})
+	if username == "" {
+		json.NewEncoder(w).Encode(map[string]interface{}{"public_key": ""})
 		return
 	}
-	var signedPreKeyID int
-	var signedPreKey, signature string
-	err = db.QueryRow("SELECT key_id, public_key, signature FROM signed_prekeys WHERE username = ? ORDER BY timestamp DESC LIMIT 1", username).Scan(&signedPreKeyID, &signedPreKey, &signature)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"error": "No signed prekey"})
-		return
+	mutex.Lock()
+	defer mutex.Unlock()
+	for _, client := range clients {
+		if client.Username == username {
+			json.NewEncoder(w).Encode(map[string]interface{}{"public_key": client.PublicKey})
+			return
+		}
 	}
-	var preKeyID int
-	var preKey string
-	err = db.QueryRow("SELECT id, public_key FROM one_time_prekeys WHERE username = ? AND used = 0 ORDER BY id LIMIT 1", username).Scan(&preKeyID, &preKey)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"identity_key": identityKey, "registration_id": registrationID,
-			"signed_pre_key_id": signedPreKeyID, "signed_pre_key": signedPreKey, "signature": signature,
-		})
-		return
-	}
-	db.Exec("UPDATE one_time_prekeys SET used = 1 WHERE id = ?", preKeyID)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"identity_key": identityKey, "registration_id": registrationID,
-		"signed_pre_key_id": signedPreKeyID, "signed_pre_key": signedPreKey, "signature": signature,
-		"pre_key_id": preKeyID, "pre_key": preKey,
-	})
+	json.NewEncoder(w).Encode(map[string]interface{}{"public_key": ""})
 }
 
-func saveSessionHandler(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username      string `json:"username"`
-		Recipient     string `json:"recipient"`
-		SessionRecord string `json:"session_record"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-	db.Exec("INSERT OR REPLACE INTO sessions (username, recipient, session_record) VALUES (?, ?, ?)",
-		req.Username, req.Recipient, req.SessionRecord)
-	json.NewEncoder(w).Encode(AuthResponse{Success: true})
-}
-
-func getSessionHandler(w http.ResponseWriter, r *http.Request) {
-	username := r.URL.Query().Get("username")
-	recipient := r.URL.Query().Get("recipient")
-	var sessionRecord string
-	err := db.QueryRow("SELECT session_record FROM sessions WHERE username = ? AND recipient = ?", username, recipient).Scan(&sessionRecord)
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{"session": nil})
-		return
-	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"session": sessionRecord})
-}
+// ==================== WEBSOCKET ====================
 
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -326,7 +264,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := regMsg.Username
-	client := &Client{Conn: conn, Username: username}
+	client := &Client{Conn: conn, Username: username, PublicKey: regMsg.PublicKey}
 
 	mutex.Lock()
 	clients[conn] = client
@@ -353,6 +291,14 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if msg.Type == "webrtc" && msg.Receiver != "" {
 			handleWebRTC(msg)
+			continue
+		}
+		if msg.Type == "set_public_key" {
+			mutex.Lock()
+			if c, ok := clients[conn]; ok {
+				c.PublicKey = msg.PublicKey
+			}
+			mutex.Unlock()
 			continue
 		}
 		if msg.Type == "group_message" && msg.GroupID != 0 {
@@ -428,13 +374,26 @@ func handleGroupMessage(msg Message) {
 func sendUserList() {
 	mutex.Lock()
 	defer mutex.Unlock()
-	var users []string
-	for _, client := range clients {
-		users = append(users, client.Username)
+
+	type UserWithKey struct {
+		Username  string `json:"username"`
+		PublicKey string `json:"public_key"`
 	}
-	msg := Message{Type: "user_list", Users: users}
+	var usersWithKeys []UserWithKey
+	for _, client := range clients {
+		usersWithKeys = append(usersWithKeys, UserWithKey{
+			Username:  client.Username,
+			PublicKey: client.PublicKey,
+		})
+	}
+
+	jsonData, _ := json.Marshal(map[string]interface{}{
+		"type":  "user_list",
+		"users": usersWithKeys,
+	})
+
 	for conn := range clients {
-		conn.WriteJSON(msg)
+		conn.WriteMessage(websocket.TextMessage, jsonData)
 	}
 }
 
@@ -488,7 +447,9 @@ func privateHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s, t, img, fn, enc string
 		rows.Scan(&s, &t, &img, &fn, &enc)
-		history = append(history, map[string]interface{}{"sender": s, "text": t, "image": img, "file_name": fn, "encrypted_message": enc})
+		history = append(history, map[string]interface{}{
+			"sender": s, "text": t, "image": img, "file_name": fn, "encrypted_message": enc,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		json.NewEncoder(w).Encode([]map[string]interface{}{})
@@ -520,13 +481,9 @@ func main() {
 	http.HandleFunc("/join_group", joinGroupHandler)
 	http.HandleFunc("/group_history", groupHistoryHandler)
 
-	// Signal Protocol endpoints
-	http.HandleFunc("/signal/register_identity", registerIdentityKeyHandler)
-	http.HandleFunc("/signal/register_signed_prekey", registerSignedPreKeyHandler)
-	http.HandleFunc("/signal/register_one_time_prekeys", registerOneTimePreKeysHandler)
-	http.HandleFunc("/signal/get_prekey_bundle", getPreKeyBundleHandler)
-	http.HandleFunc("/signal/save_session", saveSessionHandler)
-	http.HandleFunc("/signal/get_session", getSessionHandler)
+	// E2E Key endpoints
+	http.HandleFunc("/keys/register", registerPublicKeyHandler)
+	http.HandleFunc("/keys/get", getPublicKeyHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
