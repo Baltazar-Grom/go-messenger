@@ -290,6 +290,13 @@
             return bytes.buffer;
         }
 
+        // Хэш для ключа кэша
+        async function getHash(text) {
+            const encoded = new TextEncoder().encode(text);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
+            return arrayBufferToBase64(hashBuffer);
+        }
+
         // Загрузка или генерация ключевой пары
         async function loadOrGenerateKeyPair() {
             const storageKey = 'e2e_keypair_' + currentUser;
@@ -299,7 +306,6 @@
                 try {
                     const parsed = JSON.parse(savedKeys);
                     
-                    // Валидация JWK
                     if (!parsed.privateKey || !parsed.privateKey.kty || !parsed.publicKey) {
                         console.warn('⚠️ Битый JWK, генерируем новые ключи');
                         localStorage.removeItem(storageKey);
@@ -325,6 +331,7 @@
                     
                     myPublicKeyBase64 = parsed.publicKey;
                     console.log('✅ Ключи загружены из localStorage');
+                    console.log('🔑 Публичный ключ:', myPublicKeyBase64.substring(0, 20) + '...');
                     return true;
                 } catch(e) {
                     console.warn('Ошибка загрузки ключей:', e);
@@ -353,6 +360,7 @@
                     }));
                     
                     console.log('🔑 Новые ключи сгенерированы и сохранены');
+                    console.log('🔑 Публичный ключ:', myPublicKeyBase64.substring(0, 20) + '...');
                     return true;
                 } catch (err) {
                     console.error('❌ Ошибка генерации ключей:', err);
@@ -377,6 +385,7 @@
             }
         }
 
+        // ИСПРАВЛЕНО: используем deriveBits + importKey вместо deriveKey напрямую
         async function getSharedKey(otherPublicKeyBase64) {
             if (sharedKeysCache[otherPublicKeyBase64]) {
                 return sharedKeysCache[otherPublicKeyBase64];
@@ -386,15 +395,24 @@
                 const otherPublicKey = await importPublicKey(otherPublicKeyBase64);
                 if (!otherPublicKey) throw new Error('Не удалось импортировать ключ');
                 
-                const aesKey = await crypto.subtle.deriveKey(
+                // Получаем 32 байта общего секрета через ECDH
+                const sharedBits = await crypto.subtle.deriveBits(
                     { name: 'ECDH', public: otherPublicKey },
                     myPrivateKey,
-                    { name: 'AES-GCM', length: 256 },
+                    256
+                );
+                
+                // Импортируем как AES-GCM ключ
+                const aesKey = await crypto.subtle.importKey(
+                    'raw',
+                    sharedBits,
+                    { name: 'AES-GCM' },
                     false,
                     ['encrypt', 'decrypt']
                 );
                 
                 sharedKeysCache[otherPublicKeyBase64] = aesKey;
+                console.log('✅ Общий ключ вычислен для:', otherPublicKeyBase64.substring(0, 20) + '...');
                 return aesKey;
             } catch (err) {
                 console.error('❌ Ошибка деривации ключа:', err);
@@ -463,18 +481,28 @@
         }
 
         // ==================== ЛОКАЛЬНЫЙ КЭШ СООБЩЕНИЙ ====================
+        // КЛЮЧ КЭША = хэш зашифрованного сообщения (не зависит от message_id)
         
-        function saveMessageToCache(chatId, messageId, text) {
+        async function saveMessageToCache(chatId, encryptedBase64, originalText) {
             const cacheKey = `msg_cache_${currentUser}_${chatId}`;
             const cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-            cache[messageId] = text;
+            const hash = await getHash(encryptedBase64);
+            cache[hash] = originalText;
             localStorage.setItem(cacheKey, JSON.stringify(cache));
+            console.log('💾 Сообщение сохранено в кэш, хэш:', hash.substring(0, 10) + '...');
         }
 
-        function getMessageFromCache(chatId, messageId) {
+        async function getMessageFromCache(chatId, encryptedBase64) {
             const cacheKey = `msg_cache_${currentUser}_${chatId}`;
             const cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-            return cache[messageId] || null;
+            const hash = await getHash(encryptedBase64);
+            const result = cache[hash] || null;
+            if (result) {
+                console.log('📖 Сообщение найдено в кэше, хэш:', hash.substring(0, 10) + '...');
+            } else {
+                console.log('⚠️ Сообщение не найдено в кэше, хэш:', hash.substring(0, 10) + '...');
+            }
+            return result;
         }
 
         function clearMessageCache(chatId) {
@@ -527,7 +555,6 @@
             if (peer) peer.destroy();
             localStorage.removeItem('messenger_username');
             localStorage.removeItem('e2e_keypair_' + currentUser);
-            // Очищаем кэш сообщений
             Object.keys(localStorage).forEach(key => {
                 if (key.startsWith(`msg_cache_${currentUser}_`)) {
                     localStorage.removeItem(key);
@@ -572,33 +599,32 @@
                     if (currentChat === partner) {
                         let text = data.text;
                         let isEncrypted = false;
-                        const messageId = data.message_id || Date.now();
                         
                         if (data.encrypted_message) {
-                            if (data.username === currentUser) {
-                                // Свои сообщения - берём из локального кэша
-                                const cached = getMessageFromCache(partner, messageId);
-                                if (cached) {
-                                    text = cached;
+                            try {
+                                const enc = JSON.parse(data.encrypted_message);
+                                
+                                if (data.username === currentUser) {
+                                    // Свои сообщения - берём из локального кэша по хэшу
+                                    const cached = await getMessageFromCache(partner, enc.encrypted);
+                                    if (cached) {
+                                        text = cached;
+                                    } else {
+                                        text = '[Зашифровано - кэш не найден]';
+                                    }
                                 } else {
-                                    text = '[Зашифровано]';
-                                }
-                                isEncrypted = true;
-                            } else {
-                                // Чужие сообщения - расшифровываем через ECDH
-                                try {
-                                    const enc = JSON.parse(data.encrypted_message);
+                                    // Чужие сообщения - расшифровываем через ECDH
                                     const senderKey = userPublicKeys[data.username];
                                     if (senderKey) {
                                         text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
-                                        isEncrypted = true;
                                     } else {
                                         text = '[Ключ отправителя не получен]';
                                     }
-                                } catch(err) {
-                                    console.error('Decryption failed:', err);
-                                    text = '[Ошибка расшифровки]';
                                 }
+                                isEncrypted = true;
+                            } catch(err) {
+                                console.error('❌ Decryption failed:', err);
+                                text = '[Ошибка расшифровки: ' + err.message + ']';
                             }
                         }
                         
@@ -699,33 +725,32 @@
                 for (const m of data) { 
                     let text = m.text; 
                     let isEncrypted = false;
-                    const messageId = m.message_id || m.id;
                     
                     if (m.encrypted_message) {
-                        if (m.sender === currentUser) {
-                            // Свои сообщения - берём из локального кэша
-                            const cached = getMessageFromCache(p, messageId);
-                            if (cached) {
-                                text = cached;
+                        try {
+                            const enc = JSON.parse(m.encrypted_message);
+                            
+                            if (m.sender === currentUser) {
+                                // Свои сообщения - берём из локального кэша по хэшу
+                                const cached = await getMessageFromCache(p, enc.encrypted);
+                                if (cached) {
+                                    text = cached;
+                                } else {
+                                    text = '[Зашифровано - кэш не найден]';
+                                }
                             } else {
-                                text = '[Зашифровано]';
-                            }
-                            isEncrypted = true;
-                        } else {
-                            // Чужие сообщения - расшифровываем через ECDH
-                            try {
-                                const enc = JSON.parse(m.encrypted_message);
+                                // Чужие сообщения - расшифровываем через ECDH
                                 const senderKey = userPublicKeys[m.sender];
                                 if (senderKey) {
                                     text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
-                                    isEncrypted = true;
                                 } else {
                                     text = '[Ключ не получен]';
                                 }
-                            } catch(err) {
-                                console.error('Decryption failed:', err);
-                                text = '[Ошибка расшифровки]';
                             }
+                            isEncrypted = true;
+                        } catch(err) {
+                            console.error('❌ Decryption failed:', err);
+                            text = '[Ошибка расшифровки: ' + err.message + ']';
                         }
                     }
                     
@@ -798,10 +823,8 @@
                             const encrypted = await encryptMessage(e.target.result, recipientKey);
                             msg.encrypted_message = JSON.stringify(encrypted);
                             msg.text = '[Зашифровано]';
-                            // Сохраняем расшифрованную версию в кэш
-                            const messageId = Date.now();
-                            saveMessageToCache(currentChat, messageId, e.target.result);
-                            msg.message_id = messageId;
+                            // Сохраняем в кэш по хэшу зашифрованного сообщения
+                            await saveMessageToCache(currentChat, encrypted.encrypted, e.target.result);
                         } else {
                             showToast('Ключ получателя не получен', 'error');
                             return;
@@ -831,10 +854,8 @@
                         const encrypted = await encryptMessage(input.value, recipientKey);
                         msg.encrypted_message = JSON.stringify(encrypted);
                         msg.text = '[Зашифровано]';
-                        // Сохраняем расшифрованную версию в кэш
-                        const messageId = Date.now();
-                        saveMessageToCache(currentChat, messageId, input.value);
-                        msg.message_id = messageId;
+                        // Сохраняем в кэш по хэшу зашифрованного сообщения
+                        await saveMessageToCache(currentChat, encrypted.encrypted, input.value);
                     } else {
                         showToast('Ключ получателя не получен', 'error');
                         return;
