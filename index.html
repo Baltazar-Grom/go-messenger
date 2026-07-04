@@ -254,6 +254,7 @@
             <script>
         var socket, currentUser = '', currentChat = 'general', currentGroupID = 0;
         var isRegisterMode = false, statusTimer;
+        var userLoggedOut = false; // Флаг для отслеживания выхода пользователя
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false, peer = null;
         
@@ -579,13 +580,33 @@
         function connectWebSocket() {
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             socket = new WebSocket(ws);
+    
             socket.onopen = function() {
                 socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: myPublicKeyBase64 }));
                 loadGeneralHistory();
                 loadGroups();
                 loadAvailableGroups();
                 initPeer();
+                };
+    
+            // ИСПРАВЛЕНО: обработка отключения при входе с другого устройства
+            socket.onclose = function(event) {
+                console.log('🔌 WebSocket закрыт');
+                // Если закрытие не было инициировано пользователем (logout)
+                if (!userLoggedOut) {
+                    showToast('⚠️ Соединение потеряно. Возможно, вы вошли с другого устройства.', 'warning', 5000);
+                    // Автоматический выход через 2 секунды
+                    setTimeout(() => {
+                        logout();
+                    }, 2000);
+                }
             };
+    
+            socket.onerror = function(error) {
+                console.error('❌ WebSocket ошибка:', error);
+                showToast('Ошибка соединения с сервером', 'error');
+            };
+    
             socket.onmessage = async function(event) {
                 var data = JSON.parse(event.data);
                 if (data.type === "typing") {
@@ -613,14 +634,14 @@
                         let text = data.text;
                         let isEncrypted = false;
                         let isOldMessage = false;
-                        
+                
                         if (data.encrypted_message) {
                             try {
                                 const enc = JSON.parse(data.encrypted_message);
-                                
+                            
                                 // ВСЕГДА сначала проверяем кэш (для входящих и исходящих)
                                 const cached = await getMessageFromCache(partner, enc.encrypted);
-                                
+                        
                                 if (cached) {
                                     // Нашли в кэше — показываем расшифрованную версию
                                     text = cached;
@@ -629,14 +650,21 @@
                                     // Не нашли в кэше — пытаемся расшифровать
                                     const senderKey = userPublicKeys[data.username];
                                     if (senderKey) {
-                                        const decrypted = await decryptMessage(enc.encrypted, enc.iv, senderKey);
-                                        if (decrypted === '__KEY_MISMATCH__') {
-                                            text = '[Сообщение зашифровано старым ключом]';
+                                        // ИСПРАВЛЕНО: проверяем, не пытаемся ли мы расшифровать своим же ключом
+                                        if (data.username === currentUser && senderKey === myPublicKeyBase64) {
+                                            // Сообщение от самого себя, зашифрованное на старый ключ
+                                            text = '[Сообщение с другого устройства]';
                                             isOldMessage = true;
                                         } else {
-                                            text = decrypted;
-                                            // Сохраняем в кэш для будущего использования
-                                            await saveMessageToCache(partner, enc.encrypted, decrypted);
+                                            const decrypted = await decryptMessage(enc.encrypted, enc.iv, senderKey);
+                                            if (decrypted === '__KEY_MISMATCH__') {
+                                                text = '[Сообщение зашифровано старым ключом]';
+                                                isOldMessage = true;
+                                            } else {
+                                                text = decrypted;
+                                                // Сохраняем в кэш для будущего использования
+                                                await saveMessageToCache(partner, enc.encrypted, decrypted);
+                                            }
                                         }
                                     } else {
                                         text = '[Ключ отправителя не получен]';
@@ -649,7 +677,7 @@
                                 isEncrypted = true;
                             }
                         }
-                        
+                
                         addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, isEncrypted, isOldMessage);
                     }
                 } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);

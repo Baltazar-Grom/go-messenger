@@ -264,6 +264,26 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := regMsg.Username
+
+	// ИСПРАВЛЕНО: закрываем все старые соединения с этим username
+	// Один аккаунт = одно устройство
+	mutex.Lock()
+	for oldConn, client := range clients {
+		if client.Username == username {
+			// Отправляем уведомление старому устройству
+			oldConn.WriteJSON(Message{
+				Type:     "system",
+				Username: "Система",
+				Text:     "Вы были отключены, так как вошли с другого устройства",
+			})
+			oldConn.Close()
+			delete(clients, oldConn)
+			console_log := "[INFO] Закрыто старое соединение для пользователя: " + username
+			fmt.Println(console_log)
+		}
+	}
+	mutex.Unlock()
+
 	client := &Client{Conn: conn, Username: username, PublicKey: regMsg.PublicKey}
 
 	mutex.Lock()
@@ -275,7 +295,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		var msg Message
-		if conn.ReadJSON(&msg) != nil {
+		if err := conn.ReadJSON(&msg); err != nil {
 			mutex.Lock()
 			delete(clients, conn)
 			mutex.Unlock()
