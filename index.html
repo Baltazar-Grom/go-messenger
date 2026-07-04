@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Go Мессенджер (Signal Protocol)</title>
-    <script src="https://cdn.jsdelivr.net/npm/@privacyresearch/libsignal-protocol-typescript@0.0.16/dist/libsignal-protocol.min.js"></script>
+    <title>Go Мессенджер (E2E)</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -245,9 +244,11 @@
         let localStream, currentCall = null, currentCallTarget = '';
         let currentFacingMode = 'user', isMuted = false, peer = null;
         
-        // Signal Protocol
-        let signalStore = null;
-        let signalInitialized = false;
+        // E2E шифрование
+        let myPrivateKey = null;
+        let myPublicKey = null;
+        let myPublicKeyBase64 = null;
+        let userPublicKeys = {};
 
         const icons = { videoCall: '<svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>' };
 
@@ -268,255 +269,194 @@
             }, duration);
         }
 
-        // ==================== SIGNAL PROTOCOL ====================
+        // ==================== E2E ШИФРОВАНИЕ ====================
         
-        class SignalKeyStore {
-            constructor(username) {
-                this.username = username;
-                this.storageKey = 'signal_store_' + username;
-                this.data = JSON.parse(localStorage.getItem(this.storageKey) || '{}');
+        // Конвертация ArrayBuffer <-> Base64
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            let bytes = new Uint8Array(buffer);
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
             }
-
-            save() {
-                localStorage.setItem(this.storageKey, JSON.stringify(this.data));
-            }
-
-            getIdentityKeyPair() {
-                if (!this.data.identityKey) return null;
-                return {
-                    pubKey: this._base64ToArrayBuffer(this.data.identityKey.pubKey),
-                    privKey: this._base64ToArrayBuffer(this.data.identityKey.privKey)
-                };
-            }
-
-            getLocalRegistrationId() {
-                return this.data.registrationId;
-            }
-
-            putPreKey(keyId, keyPair) {
-                this.data.preKeys = this.data.preKeys || {};
-                this.data.preKeys[keyId] = {
-                    pubKey: this._arrayBufferToBase64(keyPair.pubKey),
-                    privKey: this._arrayBufferToBase64(keyPair.privKey)
-                };
-                this.save();
-            }
-
-            getPreKey(keyId) {
-                if (!this.data.preKeys || !this.data.preKeys[keyId]) return null;
-                const key = this.data.preKeys[keyId];
-                return {
-                    pubKey: this._base64ToArrayBuffer(key.pubKey),
-                    privKey: this._base64ToArrayBuffer(key.privKey)
-                };
-            }
-
-            removePreKey(keyId) {
-                if (this.data.preKeys) {
-                    delete this.data.preKeys[keyId];
-                    this.save();
-                }
-            }
-
-            putSignedPreKey(keyId, keyPair) {
-                this.data.signedPreKeys = this.data.signedPreKeys || {};
-                this.data.signedPreKeys[keyId] = {
-                    pubKey: this._arrayBufferToBase64(keyPair.pubKey),
-                    privKey: this._arrayBufferToBase64(keyPair.privKey)
-                };
-                this.save();
-            }
-
-            getSignedPreKey(keyId) {
-                if (!this.data.signedPreKeys || !this.data.signedPreKeys[keyId]) return null;
-                const key = this.data.signedPreKeys[keyId];
-                return {
-                    pubKey: this._base64ToArrayBuffer(key.pubKey),
-                    privKey: this._base64ToArrayBuffer(key.privKey)
-                };
-            }
-
-            putSession(recipientId, record) {
-                this.data.sessions = this.data.sessions || {};
-                this.data.sessions[recipientId] = record;
-                this.save();
-            }
-
-            loadSession(recipientId) {
-                if (!this.data.sessions || !this.data.sessions[recipientId]) return null;
-                return this.data.sessions[recipientId];
-            }
-
-            isTrustedIdentity(recipientId, identityKey) {
-                return Promise.resolve(true);
-            }
-
-            saveIdentity(recipientId, identityKey) {
-                return Promise.resolve(false);
-            }
-
-            _arrayBufferToBase64(buffer) {
-                let binary = '';
-                let bytes = new Uint8Array(buffer);
-                for (let i = 0; i < bytes.byteLength; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                }
-                return btoa(binary);
-            }
-
-            _base64ToArrayBuffer(base64) {
-                let binaryString = atob(base64);
-                let bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                return bytes.buffer;
-            }
+            return btoa(binary);
         }
 
-        async function initSignalProtocol() {
-            // Проверяем, что библиотека загружена
-            if (typeof libsignal === 'undefined') {
-                console.error('❌ Библиотека libsignal не загружена');
-                showToast('Ошибка загрузки библиотеки шифрования', 'error');
-                return;
+        function base64ToArrayBuffer(base64) {
+            let binaryString = atob(base64);
+            let bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
             }
+            return bytes.buffer;
+        }
 
-            signalStore = new SignalKeyStore(currentUser);
-            
-            if (signalStore.getIdentityKeyPair()) {
-                console.log('✅ Signal Protocol ключи загружены');
-                signalInitialized = true;
-                return;
-            }
-
-            console.log('🔑 Генерация Signal Protocol ключей...');
-            
+        // Генерация пары ключей ECDH
+        async function generateKeyPair() {
             try {
-                const keys = libsignal.KeyHelper.generateIdentityKeyPair();
-                const registrationId = libsignal.KeyHelper.generateRegistrationId();
-                const preKeys = await libsignal.KeyHelper.generatePreKeys(1, 100);
-                const signedPreKey = await libsignal.KeyHelper.generateSignedPreKey(keys, 1);
-
-                signalStore.data.identityKey = {
-                    pubKey: signalStore._arrayBufferToBase64(keys.pubKey),
-                    privKey: signalStore._arrayBufferToBase64(keys.privKey)
-                };
-                signalStore.data.registrationId = registrationId;
+                const keyPair = await crypto.subtle.generateKey(
+                    {
+                        name: 'ECDH',
+                        namedCurve: 'P-256'
+                    },
+                    true,
+                    ['deriveBits', 'deriveKey']
+                );
                 
-                preKeys.forEach(pk => {
-                    signalStore.putPreKey(pk.keyId, pk.keyPair);
-                });
+                myPrivateKey = keyPair.privateKey;
+                myPublicKey = keyPair.publicKey;
                 
-                signalStore.putSignedPreKey(signedPreKey.keyId, signedPreKey.keyPair);
-                signalStore.save();
-
-                await registerKeysOnServer(keys, registrationId, preKeys, signedPreKey);
+                // Экспорт публичного ключа в Base64
+                const exportedKey = await crypto.subtle.exportKey('spki', myPublicKey);
+                myPublicKeyBase64 = arrayBufferToBase64(exportedKey);
                 
-                signalInitialized = true;
-                console.log('✅ Signal Protocol инициализирован');
+                console.log('✅ Ключи ECDH сгенерированы');
+                return true;
             } catch (err) {
-                console.error('❌ Ошибка инициализации Signal Protocol:', err);
-                showToast('Ошибка инициализации шифрования', 'error');
+                console.error('❌ Ошибка генерации ключей:', err);
+                return false;
             }
         }
 
-        async function registerKeysOnServer(identityKeyPair, registrationId, preKeys, signedPreKey) {
-            const arrayBufferToBase64 = (buffer) => {
-                let binary = '';
-                let bytes = new Uint8Array(buffer);
-                for (let i = 0; i < bytes.byteLength; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                }
-                return btoa(binary);
-            };
-
-            await fetch('/signal/register_identity', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: currentUser,
-                    identity_key: arrayBufferToBase64(identityKeyPair.pubKey),
-                    registration_id: registrationId
-                })
-            });
-
-            await fetch('/signal/register_signed_prekey', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: currentUser,
-                    key_id: signedPreKey.keyId,
-                    public_key: arrayBufferToBase64(signedPreKey.keyPair.pubKey),
-                    signature: arrayBufferToBase64(signedPreKey.signature)
-                })
-            });
-
-            const preKeysData = preKeys.map(pk => ({
-                key_id: pk.keyId,
-                public_key: arrayBufferToBase64(pk.keyPair.pubKey)
-            }));
-
-            await fetch('/signal/register_one_time_prekeys', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: currentUser,
-                    pre_keys: preKeysData
-                })
-            });
+        // Импорт публичного ключа из Base64
+        async function importPublicKey(base64Key) {
+            try {
+                const keyBuffer = base64ToArrayBuffer(base64Key);
+                const publicKey = await crypto.subtle.importKey(
+                    'spki',
+                    keyBuffer,
+                    {
+                        name: 'ECDH',
+                        namedCurve: 'P-256'
+                    },
+                    true,
+                    []
+                );
+                return publicKey;
+            } catch (err) {
+                console.error('❌ Ошибка импорта ключа:', err);
+                return null;
+            }
         }
 
-        async function encryptForUser(recipientUsername, message) {
-            if (!signalInitialized) throw new Error('Signal Protocol не инициализирован');
-
-            const response = await fetch(`/signal/get_prekey_bundle?username=${recipientUsername}`);
-            const bundle = await response.json();
-
-            if (bundle.error) throw new Error(bundle.error);
-
-            const address = new libsignal.SignalProtocolAddress(recipientUsername, 1);
-            const sessionBuilder = new libsignal.SessionBuilder(signalStore, address);
-            
-            const preKeyBundle = {
-                registrationId: bundle.registration_id,
-                identityKey: signalStore._base64ToArrayBuffer(bundle.identity_key),
-                signedPreKeyPub: signalStore._base64ToArrayBuffer(bundle.signed_pre_key),
-                signedPreKeySig: signalStore._base64ToArrayBuffer(bundle.signature),
-                signedPreKeyId: bundle.signed_pre_key_id
-            };
-
-            if (bundle.pre_key) {
-                preKeyBundle.preKeyPub = signalStore._base64ToArrayBuffer(bundle.pre_key);
-                preKeyBundle.preKeyId = bundle.pre_key_id;
+        // Вычисление общего секрета и деривация AES ключа
+        async function deriveSharedSecret(privateKey, publicKey) {
+            try {
+                // ECDH для получения общего секрета
+                const sharedBits = await crypto.subtle.deriveBits(
+                    {
+                        name: 'ECDH',
+                        public: publicKey
+                    },
+                    privateKey,
+                    256
+                );
+                
+                // SHA-256 для деривации AES ключа
+                const aesKey = await crypto.subtle.digest('SHA-256', sharedBits);
+                
+                // Импорт как AES-GCM ключ
+                return await crypto.subtle.importKey(
+                    'raw',
+                    aesKey,
+                    { name: 'AES-GCM' },
+                    false,
+                    ['encrypt', 'decrypt']
+                );
+            } catch (err) {
+                console.error('❌ Ошибка деривации ключа:', err);
+                return null;
             }
-
-            await sessionBuilder.processPreKeyBundle(preKeyBundle);
-
-            const sessionCipher = new libsignal.SessionCipher(signalStore, address);
-            const ciphertext = await sessionCipher.encrypt(message);
-
-            return {
-                type: ciphertext.type,
-                body: ciphertext.body,
-                registrationId: ciphertext.registrationId
-            };
         }
 
-        async function decryptFromUser(senderUsername, ciphertext) {
-            if (!signalInitialized) throw new Error('Signal Protocol не инициализирован');
-
-            const address = new libsignal.SignalProtocolAddress(senderUsername, 1);
-            const sessionCipher = new libsignal.SessionCipher(signalStore, address);
-
-            let plaintext;
-            if (ciphertext.type === 3) {
-                plaintext = await sessionCipher.decryptPreKeyWhisperMessage(ciphertext.body, 'base64');
-            } else {
-                plaintext = await sessionCipher.decryptWhisperMessage(ciphertext.body, 'base64');
+        // Шифрование сообщения
+        async function encryptMessage(text, recipientPublicKeyBase64) {
+            try {
+                const recipientPublicKey = await importPublicKey(recipientPublicKeyBase64);
+                if (!recipientPublicKey) throw new Error('Не удалось импортировать ключ получателя');
+                
+                const aesKey = await deriveSharedSecret(myPrivateKey, recipientPublicKey);
+                if (!aesKey) throw new Error('Не удалось вычислить общий ключ');
+                
+                // Генерация случайного IV
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                
+                // Шифрование
+                const encodedText = new TextEncoder().encode(text);
+                const encrypted = await crypto.subtle.encrypt(
+                    {
+                        name: 'AES-GCM',
+                        iv: iv
+                    },
+                    aesKey,
+                    encodedText
+                );
+                
+                return {
+                    encrypted: arrayBufferToBase64(encrypted),
+                    iv: arrayBufferToBase64(iv)
+                };
+            } catch (err) {
+                console.error('❌ Ошибка шифрования:', err);
+                throw err;
             }
+        }
 
-            return new TextDecoder().decode(plaintext);
+        // Расшифровка сообщения
+        async function decryptMessage(encryptedBase64, ivBase64, senderPublicKeyBase64) {
+            try {
+                const senderPublicKey = await importPublicKey(senderPublicKeyBase64);
+                if (!senderPublicKey) throw new Error('Не удалось импортировать ключ отправителя');
+                
+                const aesKey = await deriveSharedSecret(myPrivateKey, senderPublicKey);
+                if (!aesKey) throw new Error('Не удалось вычислить общий ключ');
+                
+                const encrypted = base64ToArrayBuffer(encryptedBase64);
+                const iv = new Uint8Array(base64ToArrayBuffer(ivBase64));
+                
+                // Расшифровка
+                const decrypted = await crypto.subtle.decrypt(
+                    {
+                        name: 'AES-GCM',
+                        iv: iv
+                    },
+                    aesKey,
+                    encrypted
+                );
+                
+                return new TextDecoder().decode(decrypted);
+            } catch (err) {
+                console.error('❌ Ошибка расшифровки:', err);
+                throw err;
+            }
+        }
+
+        // Регистрация публичного ключа на сервере
+        async function registerPublicKey() {
+            try {
+                await fetch('/keys/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: currentUser,
+                        public_key: myPublicKeyBase64
+                    })
+                });
+                console.log('✅ Публичный ключ зарегистрирован');
+            } catch (err) {
+                console.error('❌ Ошибка регистрации ключа:', err);
+            }
+        }
+
+        // Получение публичного ключа пользователя
+        async function getPublicKey(username) {
+            try {
+                const response = await fetch(`/keys/get?username=${username}`);
+                const data = await response.json();
+                return data.public_key || null;
+            } catch (err) {
+                console.error('❌ Ошибка получения ключа:', err);
+                return null;
+            }
         }
 
         // ==================== AUTH & WS ====================
@@ -550,8 +490,9 @@
                     document.getElementById('authScreen').classList.add('hidden');
                     document.getElementById('app').classList.add('active');
                     
-                    showToast('Инициализация шифрования...', 'info');
-                    await initSignalProtocol();
+                    showToast('Генерация ключей шифрования...', 'info');
+                    await generateKeyPair();
+                    await registerPublicKey();
                     showToast('Шифрование готово 🔒', 'success');
                     
                     connectWebSocket();
@@ -562,7 +503,6 @@
         function logout() { 
             if (peer) peer.destroy();
             localStorage.removeItem('messenger_username');
-            localStorage.removeItem('signal_store_' + currentUser);
             location.reload(); 
         }
 
@@ -570,7 +510,7 @@
             var ws = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
             socket = new WebSocket(ws);
             socket.onopen = function() {
-                socket.send(JSON.stringify({ type: "register", username: currentUser }));
+                socket.send(JSON.stringify({ type: "register", username: currentUser, public_key: myPublicKeyBase64 }));
                 loadGeneralHistory();
                 loadGroups();
                 loadAvailableGroups();
@@ -584,6 +524,17 @@
                     statusTimer = setTimeout(function() { document.getElementById('typingIndicator').textContent = ''; }, 2000);
                     return;
                 }
+                if (data.type === "user_list") {
+                    if (data.users && Array.isArray(data.users)) {
+                        data.users.forEach(u => { 
+                            if (u.username && u.public_key) {
+                                userPublicKeys[u.username] = u.public_key;
+                            }
+                        });
+                        updateUserList(data.users.map(u => u.username));
+                    }
+                    return;
+                }
                 if (data.type === "message" && currentChat === 'general') addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
                 else if (data.type === "private") {
                     var partner = data.username === currentUser ? data.receiver : data.username;
@@ -592,9 +543,14 @@
                         let isEncrypted = false;
                         if (data.encrypted_message) {
                             try {
-                                const ciphertext = JSON.parse(data.encrypted_message);
-                                text = await decryptFromUser(data.username, ciphertext);
-                                isEncrypted = true;
+                                const enc = JSON.parse(data.encrypted_message);
+                                const senderKey = userPublicKeys[data.username];
+                                if (senderKey) {
+                                    text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
+                                    isEncrypted = true;
+                                } else {
+                                    text = '[Ключ отправителя не получен]';
+                                }
                             } catch(err) {
                                 console.error('Decryption failed:', err);
                                 text = '[Ошибка расшифровки]';
@@ -603,7 +559,6 @@
                         addMessageToUI(data.username, text, data.image, data.file_name, data.username === currentUser, isEncrypted);
                     }
                 } else if (data.type === "group_message" && currentChat === 'group' && currentGroupID === data.group_id) addMessageToUI(data.username, data.text, data.image, data.file_name, data.username === currentUser);
-                else if (data.type === "user_list") updateUserList(data.users);
                 else if (data.type === "system" && currentChat === 'general') addSystemMessage(data.text);
             };
         }
@@ -644,7 +599,8 @@
                 document.getElementById('authScreen').classList.add('hidden'); 
                 document.getElementById('app').classList.add('active'); 
                 
-                await initSignalProtocol();
+                await generateKeyPair();
+                await registerPublicKey();
                 connectWebSocket();
             }
         };
@@ -699,9 +655,14 @@
                     let isEncrypted = false;
                     if (m.encrypted_message) {
                         try {
-                            const ciphertext = JSON.parse(m.encrypted_message);
-                            text = await decryptFromUser(m.sender, ciphertext);
-                            isEncrypted = true;
+                            const enc = JSON.parse(m.encrypted_message);
+                            const senderKey = userPublicKeys[m.sender];
+                            if (senderKey) {
+                                text = await decryptMessage(enc.encrypted, enc.iv, senderKey);
+                                isEncrypted = true;
+                            } else {
+                                text = '[Ключ не получен]';
+                            }
                         } catch(err) {
                             console.error('Decryption failed:', err);
                             text = '[Ошибка расшифровки]';
@@ -739,7 +700,8 @@
             var others = users.filter(u => u !== currentUser);
             others.forEach(function(u) {
                 var div = document.createElement('div'); div.className = 'chat-item';
-                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span><span class="e2e-badge">🔒</span></div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
+                const hasKey = userPublicKeys[u] ? '<span class="e2e-badge">🔒</span>' : '';
+                div.innerHTML = '<div class="chat-avatar">' + u.charAt(0).toUpperCase() + '</div><div class="chat-info"><div class="chat-name">' + u + ' <span class="online-dot"></span>' + hasKey + '</div><div class="chat-meta">В сети</div></div><button class="call-btn-small" onclick="startCall(\''+u+'\',event)">' + icons.videoCall + '</button>';
                 div.onclick = function() { switchToPrivate(u); }; list.appendChild(div);
             });
         }
@@ -770,9 +732,15 @@
                 else { 
                     msg.type='private'; msg.receiver=currentChat;
                     try {
-                        const encrypted = await encryptForUser(currentChat, e.target.result);
-                        msg.encrypted_message = JSON.stringify(encrypted);
-                        msg.text = '[Зашифровано]';
+                        const recipientKey = userPublicKeys[currentChat];
+                        if (recipientKey) {
+                            const encrypted = await encryptMessage(e.target.result, recipientKey);
+                            msg.encrypted_message = JSON.stringify(encrypted);
+                            msg.text = '[Зашифровано]';
+                        } else {
+                            showToast('Ключ получателя не получен', 'error');
+                            return;
+                        }
                     } catch(err) {
                         showToast('Ошибка шифрования файла', 'error');
                         return;
@@ -793,9 +761,15 @@
             else { 
                 msg.type='private'; msg.receiver=currentChat;
                 try {
-                    const encrypted = await encryptForUser(currentChat, input.value);
-                    msg.encrypted_message = JSON.stringify(encrypted);
-                    msg.text = '[Зашифровано]';
+                    const recipientKey = userPublicKeys[currentChat];
+                    if (recipientKey) {
+                        const encrypted = await encryptMessage(input.value, recipientKey);
+                        msg.encrypted_message = JSON.stringify(encrypted);
+                        msg.text = '[Зашифровано]';
+                    } else {
+                        showToast('Ключ получателя не получен', 'error');
+                        return;
+                    }
                 } catch(err) {
                     showToast('Ошибка шифрования: ' + err.message, 'error');
                     return;
